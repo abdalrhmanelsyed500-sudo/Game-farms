@@ -72,6 +72,30 @@ const DEFINITIONS: readonly AssetDefinition[] = [
   { key: 'shadow_blob', category: 'fx', width: 64, height: 24, originX: 0.5, originY: 0.5, generated: true },
   { key: 'tile_hover', category: 'ui', width: 128, height: 64, originX: 0.5, originY: 0.5, generated: true },
   { key: 'tile_selected', category: 'ui', width: 128, height: 64, originX: 0.5, originY: 0.5, generated: true },
+
+  // -- Phase 2: farming -------------------------------------------------------------
+  tile('soil_tilled'),
+  tile('soil_watered'),
+  tile('tile_valid'),
+  tile('tile_invalid'),
+  { key: 'fx_dot', category: 'fx', width: 16, height: 16, originX: 0.5, originY: 0.5, generated: true },
+
+  // Wheat (48x64), corn (56x96 tall), tomato (56x64) — 4 stages each.
+  obj('crop_wheat_stage_01', 48, 64),
+  obj('crop_wheat_stage_02', 48, 64),
+  obj('crop_wheat_stage_03', 48, 64),
+  obj('crop_wheat_stage_04', 48, 64),
+  obj('crop_corn_stage_01', 56, 96),
+  obj('crop_corn_stage_02', 56, 96),
+  obj('crop_corn_stage_03', 56, 96),
+  obj('crop_corn_stage_04', 56, 96),
+  obj('crop_tomato_stage_01', 56, 64),
+  obj('crop_tomato_stage_02', 56, 64),
+  obj('crop_tomato_stage_03', 56, 64),
+  obj('crop_tomato_stage_04', 56, 64),
+
+  // Farmhouse placeholder (Phase 2 static; BuildingSystem arrives later).
+  obj('farmhouse_01', 216, 208),
 ];
 
 export const ASSET_MANIFEST: Readonly<Record<string, AssetDefinition>> = Object.freeze(

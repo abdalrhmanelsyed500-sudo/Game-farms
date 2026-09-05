@@ -1,3 +1,4 @@
+import { SoilState } from '../../shared/types/farming.js';
 import { TerrainType, type TileData } from '../../shared/types/tiles.js';
 
 /**
@@ -44,8 +45,13 @@ export function createTile(
     elevation?: number;
     objectId?: string | null;
     metadata?: Record<string, unknown>;
+    soil?: SoilState;
+    watered?: boolean;
+    cropId?: string | null;
+    cropStage?: number;
   } = {},
 ): TileData {
+  const soil = options.soil ?? SoilState.Normal;
   return {
     x,
     y,
@@ -55,6 +61,10 @@ export function createTile(
     buildable: isTerrainBuildable(terrain),
     elevation: options.elevation ?? 0,
     objectId: options.objectId ?? null,
+    soil,
+    watered: options.watered ?? soil === SoilState.Watered,
+    cropId: options.cropId ?? null,
+    cropStage: options.cropStage ?? 0,
     metadata: options.metadata ?? {},
   };
 }

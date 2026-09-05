@@ -7,6 +7,7 @@ export const OBJECT_FOOTPRINTS: Readonly<Record<WorldObjectType, { width: number
   [WorldObjectType.Rock]: { width: 1, height: 1 },
   [WorldObjectType.Flower]: { width: 1, height: 1 },
   [WorldObjectType.Bush]: { width: 1, height: 1 },
+  [WorldObjectType.Farmhouse]: { width: 3, height: 2 },
 };
 
 /** Which object types block movement (decor like flowers does not). */
@@ -15,6 +16,7 @@ const BLOCKING_OBJECTS: Readonly<Record<WorldObjectType, boolean>> = {
   [WorldObjectType.Rock]: true,
   [WorldObjectType.Flower]: false,
   [WorldObjectType.Bush]: false,
+  [WorldObjectType.Farmhouse]: true,
 };
 
 let nextRuntimeId = 1;

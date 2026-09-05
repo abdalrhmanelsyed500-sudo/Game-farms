@@ -1,14 +1,13 @@
-# Game Farms — Phase 1: Engine + Isometric World Foundation
+# Game Farms — Phase 2: Farming World
 
 A production-quality foundation for an original browser-based isometric farming / life-sim
-game. Phase 1 delivers the engine, the isometric renderer, and a playable demo world —
-**no farming, crops, animals, inventory, economy, quests, NPCs, multiplayer, auth, shops,
-or database yet.** Those plug in later without rewriting the core.
+game. Phase 1 delivered the engine + isometric renderer; **Phase 2 adds the first real
+playable farming loop** on top of the untouched Phase 1 core:
 
-> Open the game and you get a living isometric world: grasslands, a northern forest, a
-> winding western road, an eastern pond, southern farm plots, trees, rocks, flowers, a
-> movable player placeholder, smooth pan/zoom camera, tile picking, chunk streaming, and
-> a full debug toolkit.
+> **Select land → till → plant → water → grow → harvest** (wheat, corn, tomato),
+> with a data-driven farm plot, timestamp-based growth, and placeholder art — still
+> **no animals, inventory, economy, quests, NPCs, multiplayer, auth, shops, or database.**
+> Those plug in later without rewriting the core.
 
 ---
 
@@ -43,8 +42,9 @@ The world is rendered **only** by Phaser — no React/DOM rendering of game cont
 | Mouse drag / touch drag | Pan camera                      |
 | Mouse wheel        | Zoom toward pointer (0.5× – 2×)     |
 | Pinch (touch)      | Zoom                                |
-| Hover              | Highlight tile + inspect coordinates |
-| Click / tap        | Select tile (yellow diamond)        |
+| Hover              | Highlight tile + validity preview (white/green ✓/red ✗) |
+| Click / tap        | Select tile + run current tool action |
+| `1`–`6` / toolbar  | Hoe · Wheat · Corn · Tomato · Water · Hand (`Esc` = none) |
 | `F3`               | Toggle debug overlay                |
 | `G`                | Toggle tile-grid overlay            |
 | `C`                | Toggle chunk-boundary overlay       |
@@ -70,6 +70,9 @@ The world is rendered **only** by Phaser — no React/DOM rendering of game cont
 
 USER → InputManager → CameraController → IsoCamera → Phaser camera
                     → PlayerPlaceholder → CollisionSystem → World
+                    → Toolbar → FarmingSystem → LocalFarmState (+ events)
+                                                 ↓
+                                   CropRenderer / SoilRenderer / FarmEffects
 ```
 
 **Hard rules enforced by the codebase:**
@@ -102,6 +105,9 @@ src/
 │   ├── input/                  # InputManager (normalized actions), KeyboardInput, PointerInput
 │   ├── camera/                 # CameraController (smoothing, bounds, zoom-to-pointer)
 │   ├── debug/                  # Debug/Performance/Coordinate/Grid/Chunk/Collision overlays
+│   ├── farming/                # FarmingSystem, LocalFarmState, Crop/Soil renderers,
+│   │                           # CropDefinitions, Clock, SeedPouch, FarmEffects
+│   ├── ui/                     # Toolbar (temporary tool UI)
 │   └── assets/                 # AssetManifest, AssetLoader, PlaceholderTextureFactory
 ├── shared/
 │   ├── types/                  # coordinates, tiles, objects (pure data contracts)
@@ -114,6 +120,8 @@ tests/
 ├── ChunkManager.test.ts        # radius sets, edge clipping, load/unload events
 ├── CollisionSystem.test.ts     # free move, water block, wall slide, bounds
 └── smoke/BootSmoke.test.ts     # REAL game boot under jsdom (scenes, textures, chunks, camera…)
+├── FarmingSystem.test.ts       # soil/plant/water/harvest rules, timestamp growth, TIME_SCALE
+└── FarmingIntegration.test.ts  # event sequences, single-tile refresh, chunk-reload state
 ```
 
 ---
@@ -209,7 +217,34 @@ keys/dimensions/anchors and **zero** game code changes.
 
 ---
 
-## 11. Debug toolkit
+## 11. Farming gameplay (Phase 2)
+
+**The loop:** pick a tool from the toolbar (or keys `1`–`6`) → hover shows a validity
+preview (green ✓ / red ✗, never color alone) → click to act:
+
+1. **Hoe** — till grass/dirt inside the farm plot (soil overlay appears, brown puff).
+2. **Wheat/Corn/Tomato seeds** — plant on tilled soil (consumes 1 seed from the
+   temporary pouch, 20 each to start).
+3. **Water** — water the crop (soil darkens, droplets) — crops only grow while watered.
+4. **Hand** — harvest mature crops (gold burst, floating `+N Crop` reward event).
+
+**Rules worth knowing:**
+
+- Farming is only allowed inside the data-driven farm plot
+  (`FARM_PLOT_X/Y/W/H` in config, 24×16 tiles south of spawn) — the future
+  ownership/permission hook. Everything outside rejects with a floating reason.
+- Growth derives from **timestamps** (`plantedAt`/`wateredAt` + accrued `grownMs`),
+  never timers. Durations are dev-tuned (wheat 40s, tomato 48s, corn 55s at
+  `FARM_TIME_SCALE = 1`); production pacing is a config change.
+- State lives in `LocalFarmState` behind the `FarmStateProvider` interface — a
+  `ServerFarmStateProvider` replaces it later with zero changes to rules, renderers,
+  or UI. Crop state is never stored in sprites.
+- Every change updates **one view**: soil overlay swap, crop texture swap, or single
+  view create/destroy. Chunks are never rebuilt for farming; unload/reload rebuilds
+  crop/soil views from state automatically.
+- Crops depth-sort as 1×1 footprints through the unchanged Phase 1 `DepthSorter`.
+
+## 12. Debug toolkit
 
 - `F3` panel: FPS · player world/tile/chunk · camera scroll/zoom/chunk · loaded
   chunks · rendered tiles/objects · hover/selection · world seed/origin.
@@ -217,32 +252,48 @@ keys/dimensions/anchors and **zero** game code changes.
 - Perf panel (top-right): FPS + smoothed frame ms, chunks, tiles/objects, display
   list size, texture count.
 - `G` grid, `C` chunk bounds, `K` collision — all world-space, throttled redraws.
+- Farming lines (F3): current tool · seed counts · selected tile soil/water ·
+  crop id, stage (`2/4`), and age in seconds.
 - Browser console: `__gameFarms` exposes the running game for poking around.
 
-## 12. Tests
+## 13. Tests
 
-- **Unit (Node, no Phaser):** math, depth, world, chunks, collision — 42 tests.
+- **Unit (Node, no Phaser):** math, depth, world, chunks, collision — 42 tests,
+  all still passing unmodified (Phase 1 regression gate).
+- **Farming unit:** soil/plant/water/harvest validation, timestamp growth,
+  `TIME_SCALE`, pouch, state deltas — 22 tests (`ManualClock`, no Phaser).
+- **Farming integration:** exact event sequences, single-tile refresh proof,
+  chunk-reload state, multi-tile independence — 4 tests.
 - **Boot smoke (jsdom + stubbed canvas):** boots the real `Phaser.Game` through all
-  three scenes, generates all textures, streams 9 chunks (9216 tiles), and drives
-  camera/picking/movement/debug — 3 tests. No GPU required, runs in CI.
-- Determinism: demo-world tests rely on the fixed seed; ids are coordinate-based.
+  three scenes, generates all textures, streams 9 chunks (9216 tiles), drives
+  camera/picking/movement/debug, **and runs the full farming loop end-to-end**
+  (till → plant → water → mature → harvest, asserting single-view updates) —
+  4 tests. No GPU required, runs in CI.
+- **Total: 72 tests.** Determinism: demo-world tests rely on the fixed seed;
+  farming-time tests use `ManualClock`.
 
-## 13. Performance notes
+## 14. Performance notes
 
 - 9 loaded chunks ≈ 9.2k tile `Image`s + ~250 object views hold 60 FPS on normal
   desktop hardware (measured via the perf overlay; static images batch well).
 - World data gen: ~35 ms for 65k tiles + ~2.6k objects (typed arrays + one pass).
+- Farming updates are event-driven single-view swaps; `FarmingSystem.update()`
+  iterates only planted crops (typically dozens) and emits solely on stage change.
+  Effects are ≤10 self-destroying sprites per action.
 - Debug overlays redraw on change only (camera-delta threshold / 5 Hz text).
-- **Known limits (by design, Phase 1):** radius-1 streaming (raise
+- **Known limits (by design, Phase 2):** radius-1 streaming (raise
   `CHUNK_LOAD_RADIUS` for bigger views); no object pooling yet (structure is
   pool-ready); water/tiles are static (no animation system yet); finite 256×256
-  world (provider interface is built for server streaming later).
+  world (provider interfaces are built for server streaming later); soil never
+  dries and crops never wither (growth-gating hooks exist in `FarmingSystem`).
 
-## 14. What Phase 2 builds on this
+## 15. What Phase 3 builds on this
 
-`FarmingSystem` / `BuildingSystem` / … plug into `WorldManager` (data),
-`IsoRenderer.refreshTile` + object views (visuals), `InputManager` actions
-(`tile-select` et al.), and `CollisionMap` — without touching `IsoMath`,
-`ChunkManager`, `CameraController`, `DepthSorter`, or the renderers.
-Suggested first Phase 2 step: **hoe/soil state on tiles** (new `TileData` field +
-`refreshTile` visuals) driven by `tile-select`, with `CollisionMap` unchanged.
+`BuildingSystem` / `AnimalSystem` / `InventorySystem` / … plug into the same seams
+Phase 2 used: `WorldManager` (data), `IsoRenderer.refreshTile` + per-chunk views
+(visuals), `InputManager` + toolbar selections (actions), `FarmStateProvider`-style
+provider interfaces (local now, server later) — without touching `IsoMath`,
+`ChunkManager`, `CameraController`, `DepthSorter`, `FarmingSystem`, or the renderers.
+Suggested first Phase 3 step: **real InventorySystem** behind `ISeedInventory`-style
+ports (seeds in, harvests out), then a placement preview reusing the validity-highlight
+pattern for the first constructible building.

@@ -106,3 +106,27 @@ export const BACKGROUND_COLOR = '#101a12';
 export const DEPTH_EPSILON = 0.001;
 /** Vertical pixel offset per elevation level (2.5D lift, not full 3D). */
 export const ELEVATION_STEP_PX = 16;
+
+// ---------------------------------------------------------------------------
+// Farming (Phase 2)
+// ---------------------------------------------------------------------------
+
+/** Designated farm plot rectangle (tiles). Farming is only allowed inside. */
+export const FARM_PLOT_X = 104;
+export const FARM_PLOT_Y = 140;
+export const FARM_PLOT_WIDTH = 24;
+export const FARM_PLOT_HEIGHT = 16;
+
+/**
+ * Growth time multiplier. 1 = definition durations (dev-tuned to 30–60s per
+ * crop). Raise for production pacing without touching crop definitions.
+ */
+export const FARM_TIME_SCALE = 1;
+
+/** Starting seed count per crop (temporary pouch; inventory comes later). */
+export const SEED_STARTING_COUNT = 20;
+
+/** Toolbar bar height in screen px (tap-through exclusion + layout). */
+export const TOOLBAR_HEIGHT_PX = 76;
+/** Toolbar slot size in screen px. */
+export const TOOLBAR_SLOT_PX = 56;

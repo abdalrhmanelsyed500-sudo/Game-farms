@@ -16,4 +16,6 @@ export interface DebugContext {
   readonly player: PlayerPlaceholder;
   readonly cameraController: CameraController;
   readonly isoRenderer: IsoRenderer;
+  /** Optional Phase 2 farming lines (tool, soil, crop). Absent when no farm exists. */
+  readonly getFarmingDebugLines?: () => readonly string[];
 }

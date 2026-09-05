@@ -1,4 +1,11 @@
-import { PLAYER_SPAWN_TILE_X, PLAYER_SPAWN_TILE_Y } from '../../shared/constants/config.js';
+import {
+  FARM_PLOT_HEIGHT,
+  FARM_PLOT_WIDTH,
+  FARM_PLOT_X,
+  FARM_PLOT_Y,
+  PLAYER_SPAWN_TILE_X,
+  PLAYER_SPAWN_TILE_Y,
+} from '../../shared/constants/config.js';
 import type { TileData } from '../../shared/types/tiles.js';
 import { TerrainType } from '../../shared/types/tiles.js';
 import { WorldObjectType, type WorldObjectData } from '../../shared/types/objects.js';
@@ -51,6 +58,7 @@ export class LocalWorldDataProvider implements WorldDataProvider {
     this.paintSouthernFarm(rng.fork(51));
     this.paintStonePatch(rng.fork(61));
     this.clearSpawnArea();
+    this.authorFarmArea(rng.fork(66));
     this.authorDepthTestCorridor();
     this.scatterVegetation(rng.fork(71));
 
@@ -203,6 +211,33 @@ export class LocalWorldDataProvider implements WorldDataProvider {
   // -- object authoring ------------------------------------------------------
 
   /**
+   * Phase 2 farm area: dirt paths, a small pond, framing trees/rocks, and
+   * the static farmhouse placeholder. Runs BEFORE scatter so the scatter
+   * pass respects occupancy; the farm plot itself is scatter-excluded
+   * (guaranteed clear, tillable grass).
+   */
+  private authorFarmArea(rng: SeededRng): void {
+    // Small pond west of the plot (sand rim + water).
+    this.map.fillEllipse(88, 150, 7, 5, TerrainType.Sand, () => 0);
+    this.map.fillEllipse(88, 150, 5, 3, TerrainType.Water, () => rng.int(0, 1));
+
+    // Dirt path: spawn plaza -> farm plot (vertical), plot -> farmhouse (horizontal).
+    this.map.fillRect(127, 135, 128, 140, TerrainType.Dirt, () => rng.int(0, 1));
+    this.map.fillRect(128, 139, 145, 139, TerrainType.Dirt, () => rng.int(0, 1));
+
+    // Static farmhouse placeholder (3x2, blocking). No BuildingSystem yet.
+    this.placeObject(WorldObjectType.Farmhouse, 144, 136, 0);
+
+    // Framing trees + rocks around (never inside) the plot.
+    this.placeObject(WorldObjectType.Tree, 99, 136, 0);
+    this.placeObject(WorldObjectType.Tree, 99, 156, 1);
+    this.placeObject(WorldObjectType.Tree, 132, 142, 1);
+    this.placeObject(WorldObjectType.Tree, 132, 154, 0);
+    this.placeObject(WorldObjectType.Rock, 102, 160, 0);
+    this.placeObject(WorldObjectType.Rock, 136, 132, 0);
+  }
+
+  /**
    * Depth-sort test corridor: two facing tree rows near spawn so walking
    * north/south exercises behind/in-front sorting, plus overlapping trees
    * and mixed footprints (tree 2x2 vs rock/flower 1x1).
@@ -237,6 +272,16 @@ export class LocalWorldDataProvider implements WorldDataProvider {
       for (let x = 2; x < width - 4; x++) {
         // Keep spawn clearing + road corridor out of scatter.
         if (Math.abs(x - sx) < 9 && Math.abs(y - sy) < 9) {
+          continue;
+        }
+        // Phase 2: farm plot stays clear (expanded by 2 so 2x2 footprints
+        // cannot overhang into the plot from outside).
+        if (
+          x >= FARM_PLOT_X - 2 &&
+          x <= FARM_PLOT_X + FARM_PLOT_WIDTH &&
+          y >= FARM_PLOT_Y - 2 &&
+          y <= FARM_PLOT_Y + FARM_PLOT_HEIGHT
+        ) {
           continue;
         }
         const terrain = this.map.getTerrain(x, y);

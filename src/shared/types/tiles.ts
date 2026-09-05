@@ -2,6 +2,7 @@
  * Tile data types. Tiles are pure data — they never render themselves.
  * See game/rendering/TileRenderer.ts for the visual side.
  */
+import type { SoilState } from './farming.js';
 
 /** Logical terrain kinds supported in Phase 1. Numeric so TileMap can use typed arrays. */
 export enum TerrainType {
@@ -45,5 +46,14 @@ export interface TileData {
   readonly elevation: number;
   /** Id of the object whose footprint covers this tile, if any. */
   readonly objectId: string | null;
+  // -- Phase 2: farming state (additive; terrain behavior unchanged) -----------
+  /** Soil condition. Authoritative copy lives in the farm state provider. */
+  readonly soil: SoilState;
+  /** Whether the soil is currently watered (mirrors soil === Watered). */
+  readonly watered: boolean;
+  /** Planted crop id, if any. */
+  readonly cropId: string | null;
+  /** Last computed crop stage (meaningful only when cropId is set). */
+  readonly cropStage: number;
   readonly metadata: Readonly<Record<string, unknown>>;
 }

@@ -7,6 +7,7 @@ import {
   PLAYER_SPAWN_TILE_Y,
 } from '../../shared/constants/config.js';
 import type { TileCoord } from '../../shared/types/coordinates.js';
+import { FarmAction, ToolType } from '../../shared/types/farming.js';
 import { Logger } from '../../shared/utils/Logger.js';
 import { CameraController } from '../camera/CameraController.js';
 import { CollisionMap } from '../collision/CollisionMap.js';
@@ -20,10 +21,19 @@ import { DebugOverlay } from '../debug/DebugOverlay.js';
 import { GridOverlay } from '../debug/GridOverlay.js';
 import { PerformanceOverlay } from '../debug/PerformanceOverlay.js';
 import { PlayerPlaceholder } from '../entities/PlayerPlaceholder.js';
+import { CropRenderer } from '../farming/CropRenderer.js';
+import { CROP_IDS, getCropDefinition } from '../farming/CropDefinitions.js';
+import { SystemClock } from '../farming/Clock.js';
+import { FarmEffects } from '../farming/FarmEffects.js';
+import { FarmingSystem, describeRejectReason } from '../farming/FarmingSystem.js';
+import { LocalFarmState } from '../farming/LocalFarmState.js';
+import { SeedPouch, type ISeedInventory } from '../farming/SeedPouch.js';
+import { SoilRenderer } from '../farming/SoilRenderer.js';
 import { InputManager } from '../input/InputManager.js';
 import { IsoCamera } from '../isometric/IsoCamera.js';
 import { IsoRenderer } from '../isometric/IsoRenderer.js';
 import { RenderLayer } from '../rendering/RenderLayers.js';
+import { Toolbar } from '../ui/Toolbar.js';
 
 /**
  * WorldScene: the playable isometric world.
@@ -46,6 +56,14 @@ export class WorldScene extends Phaser.Scene {
   private cameraController!: CameraController;
   private inputManager!: InputManager;
   private player!: PlayerPlaceholder;
+
+  // -- Phase 2: farming layer (new systems on top of Phase 1) ----------------
+  private farming!: FarmingSystem;
+  private seeds!: ISeedInventory;
+  private cropRenderer!: CropRenderer;
+  private soilRenderer!: SoilRenderer;
+  private farmEffects!: FarmEffects;
+  private toolbar!: Toolbar;
 
   private hoverHighlight!: Phaser.GameObjects.Image;
   private selectedHighlight!: Phaser.GameObjects.Image;
@@ -93,6 +111,27 @@ export class WorldScene extends Phaser.Scene {
     );
     this.player.createView();
 
+    // -- farming (Phase 2 layer; Phase 1 systems untouched) --------------------------
+    const seedItemIds = CROP_IDS.map((id) => getCropDefinition(id)?.seedItemId ?? `${id}_seed`);
+    this.seeds = SeedPouch.withStarterSeeds(seedItemIds);
+    this.farming = new FarmingSystem(world, new LocalFarmState(), this.seeds, new SystemClock());
+    this.cropRenderer = new CropRenderer(
+      world.chunks,
+      this.isoRenderer.objectRendererInstance,
+      this.farming,
+    );
+    this.cropRenderer.attach();
+    this.soilRenderer = new SoilRenderer(
+      this,
+      worldManager.coordinates,
+      world.chunks,
+      this.farming,
+    );
+    this.soilRenderer.attach();
+    this.farmEffects = new FarmEffects(this, worldManager.coordinates);
+    // Single-tile refresh proof (§4): soil changes re-resolve ONLY that tile.
+    this.farming.events.on('soil-changed', ({ x, y }) => this.isoRenderer.refreshTile(x, y));
+
     // -- input ---------------------------------------------------------------------
     this.inputManager = new InputManager();
     this.inputManager.bind(this, CAMERA_WHEEL_STEP);
@@ -108,6 +147,21 @@ export class WorldScene extends Phaser.Scene {
       .setDepth(RenderLayer.SelectionHighlight + 1)
       .setVisible(false);
 
+    // -- toolbar (Phase 2 temporary tool UI) -------------------------------------------
+    this.toolbar = new Toolbar(this);
+    this.toolbar.layout(this.scale.width, this.scale.height);
+    this.toolbar.setSelected(ToolType.None, null);
+    this.refreshSeedCounts();
+    this.toolbar.events.on('tool-selected', ({ tool, seedId }) => {
+      if (tool === ToolType.Seed) {
+        this.player.setSeedId(seedId);
+      } else {
+        this.player.setTool(tool);
+      }
+      this.toolbar.setSelected(this.player.getTool(), this.player.getSeedId());
+      Logger.debug('WorldScene', `tool selected: ${tool}${seedId ? ` (${seedId})` : ''}`);
+    });
+
     // -- debug tools ---------------------------------------------------------------
     const debugCtx: DebugContext = {
       scene: this,
@@ -116,6 +170,7 @@ export class WorldScene extends Phaser.Scene {
       player: this.player,
       cameraController: this.cameraController,
       isoRenderer: this.isoRenderer,
+      getFarmingDebugLines: () => this.buildFarmingDebugLines(),
     };
     this.debugOverlay = new DebugOverlay(debugCtx);
     this.gridOverlay = new GridOverlay(debugCtx);
@@ -143,6 +198,7 @@ export class WorldScene extends Phaser.Scene {
 
     this.cameraController.update(dt, move);
     this.player.moveScreenSpace(move.x, move.y, dt);
+    this.farming.update();
 
     this.updateHoverHighlight();
 
@@ -168,9 +224,16 @@ export class WorldScene extends Phaser.Scene {
     events.on('move-camera', ({ dx, dy }) => this.cameraController.panByScreenDelta(dx, dy));
     events.on('zoom-camera', ({ x, y, factor }) => this.cameraController.zoomAt(x, y, factor));
     events.on('tile-select', (pos) => {
+      // Taps on the toolbar belong to the UI, never to the world.
+      if (this.toolbar.containsScreenPoint(pos.x, pos.y)) {
+        return;
+      }
       const tile = this.pickTile(pos.x, pos.y);
       state.setSelectedTile(tile);
       this.updateSelectedHighlight();
+      if (tile) {
+        this.executeFarmAction(tile);
+      }
     });
     events.on('toggle-debug', () => state.toggleDebug());
     events.on('toggle-grid', () => state.toggleGrid());
@@ -213,6 +276,8 @@ export class WorldScene extends Phaser.Scene {
     }
     const center = this.context.worlds.coordinates.tileCenterToScreen(tile.x, tile.y);
     this.hoverHighlight.setPosition(center.x, center.y).setVisible(true);
+    // Phase 2: the hover diamond previews action validity (white/green/red).
+    this.hoverHighlight.setTexture(this.hoverTextureFor(tile));
 
     const iso = this.cameraController.camera.screenToWorld(pointer.x, pointer.y);
     const point = this.context.worlds.coordinates.screenToWorld(iso.x, iso.y);
@@ -239,6 +304,135 @@ export class WorldScene extends Phaser.Scene {
     this.selectedHighlight.setPosition(center.x, center.y).setVisible(true);
   }
 
+  // -- farming interactions (Phase 2) ----------------------------------------------------
+
+  /** Map the player's tool to a farm action and run it with feedback. */
+  private executeFarmAction(tile: TileCoord): void {
+    const tool = this.player.getTool();
+    let action: FarmAction | null = null;
+    let seedId: string | undefined;
+    switch (tool) {
+      case ToolType.Hoe:
+        action = FarmAction.Till;
+        break;
+      case ToolType.Seed:
+        action = FarmAction.Plant;
+        seedId = this.player.getSeedId() ?? undefined;
+        break;
+      case ToolType.WateringCan:
+        action = FarmAction.Water;
+        break;
+      case ToolType.Hand:
+        action = FarmAction.Harvest;
+        break;
+      case ToolType.None:
+      default:
+        return; // inspect-only: selection highlight is the feedback
+    }
+    if (action === null) {
+      return;
+    }
+    const result = this.farming.execute(action, tile.x, tile.y, seedId);
+    if (result.ok) {
+      this.playFarmSuccess(action, tile, result.harvest?.quantity, result.harvest?.cropName);
+      this.refreshSeedCounts();
+    } else if (result.reason) {
+      this.farmEffects.rejectHint(tile.x, tile.y, describeRejectReason(result.reason));
+    }
+  }
+
+  private playFarmSuccess(
+    action: FarmAction,
+    tile: TileCoord,
+    quantity?: number,
+    cropName?: string,
+  ): void {
+    switch (action) {
+      case FarmAction.Till:
+        this.farmEffects.tillBurst(tile.x, tile.y);
+        break;
+      case FarmAction.Plant:
+        this.farmEffects.plantPuff(tile.x, tile.y);
+        break;
+      case FarmAction.Water:
+        this.farmEffects.waterDrops(tile.x, tile.y);
+        break;
+      case FarmAction.Harvest:
+        this.farmEffects.harvestBurst(tile.x, tile.y);
+        if (quantity !== undefined && cropName !== undefined) {
+          this.farmEffects.floatingText(tile.x, tile.y, `+${quantity} ${cropName}`);
+        }
+        break;
+      case FarmAction.Build:
+      case FarmAction.Interact:
+        break;
+    }
+  }
+
+  /** Hover diamond texture for the current tool: neutral/valid/invalid. */
+  private hoverTextureFor(tile: TileCoord): string {
+    const tool = this.player.getTool();
+    if (tool === ToolType.None) {
+      return 'tile_hover';
+    }
+    let valid = false;
+    switch (tool) {
+      case ToolType.Hoe:
+        valid = this.farming.canTill(tile.x, tile.y).ok;
+        break;
+      case ToolType.Seed: {
+        const seedId = this.player.getSeedId();
+        valid = seedId !== null && this.farming.canPlant(tile.x, tile.y, seedId).ok;
+        break;
+      }
+      case ToolType.WateringCan:
+        valid = this.farming.canWater(tile.x, tile.y).ok;
+        break;
+      case ToolType.Hand:
+        valid = this.farming.canHarvest(tile.x, tile.y).ok;
+        break;
+      default:
+        break;
+    }
+    return valid ? 'tile_valid' : 'tile_invalid';
+  }
+
+  private refreshSeedCounts(): void {
+    for (const cropId of CROP_IDS) {
+      const def = getCropDefinition(cropId);
+      if (def) {
+        this.toolbar.setSeedCount(cropId, this.seeds.getCount(def.seedItemId));
+      }
+    }
+  }
+
+  private buildFarmingDebugLines(): readonly string[] {
+    const tool = this.player.getTool();
+    const seedId = this.player.getSeedId();
+    const toolText = tool === ToolType.Seed && seedId ? `seed:${seedId}` : tool;
+    const counts = CROP_IDS.map((id) => {
+      const def = getCropDefinition(id);
+      return `${id.slice(0, 1).toUpperCase()}:${def ? this.seeds.getCount(def.seedItemId) : '?'}`;
+    }).join(' ');
+    const tile = this.context.state.getSelectedTile() ?? this.context.state.getHoverTile();
+    if (!tile) {
+      return [`farm    tool=${toolText} | seeds ${counts}`, `farm    tile=—`];
+    }
+    const soil = this.farming.getSoilAt(tile.x, tile.y);
+    const crop = this.farming.getCropAt(tile.x, tile.y);
+    if (!crop) {
+      return [`farm    tool=${toolText} | seeds ${counts}`, `farm    (${tile.x}, ${tile.y}) soil=${soil} crop=—`];
+    }
+    const def = getCropDefinition(crop.cropId);
+    const stages = def ? def.growthStages : '?';
+    const ageSec = Math.floor(this.farming.getCropAgeMs(crop) / 1000);
+    const stage = this.farming.getCropStage(crop);
+    return [
+      `farm    tool=${toolText} | seeds ${counts}`,
+      `farm    (${tile.x}, ${tile.y}) soil=${soil} water=${crop.watered ? 'yes' : 'no'} crop=${crop.cropId} stage=${stage + 1}/${stages} age=${ageSec}s`,
+    ];
+  }
+
   // -- streaming ----------------------------------------------------------------------
 
   /** Ensure chunks around the camera view center are loaded. */
@@ -257,6 +451,7 @@ export class WorldScene extends Phaser.Scene {
     this.cameraController.reapplyBounds();
     this.coordinateOverlay.layout(height);
     this.performanceOverlay.layout(width);
+    this.toolbar.layout(width, height);
     Logger.debug('WorldScene', `resized to ${width}x${height}`);
   }
 
@@ -270,6 +465,9 @@ export class WorldScene extends Phaser.Scene {
     this.scale.off('resize', this.handleResize, this);
     this.inputManager.unbind();
     this.isoRenderer.detach();
+    this.cropRenderer.detach();
+    this.soilRenderer.detach();
+    this.toolbar.destroy();
     this.player.destroyView();
     Logger.info('WorldScene', 'shutdown: visuals destroyed, listeners removed');
   }

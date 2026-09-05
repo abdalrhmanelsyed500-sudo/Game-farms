@@ -36,6 +36,7 @@ export class PlaceholderTextureFactory {
     factory.generateObjects();
     factory.generateEntities();
     factory.generateFx();
+    factory.generateFarming();
     factory.verifyAll();
   }
 
@@ -426,6 +427,339 @@ export class PlaceholderTextureFactory {
     this.diamondPath({ cx: 64, cy: 32, w: 122, h: 58 });
     g.strokePath();
     g.generateTexture('tile_selected', 128, 64);
+  }
+
+  // -- farming (Phase 2) ---------------------------------------------------------------
+
+  private generateFarming(): void {
+    this.soilTile('soil_tilled', 201, 0x6e4a2c, false);
+    this.soilTile('soil_watered', 202, 0x4e3320, true);
+    this.validityTile('tile_valid', 0x39d353, true);
+    this.validityTile('tile_invalid', 0xe5484d, false);
+
+    const g = this.g;
+    g.clear();
+    g.fillStyle(0xffffff, 0.35);
+    g.fillCircle(8, 8, 7);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(8, 8, 4.5);
+    g.generateTexture('fx_dot', 16, 16);
+
+    this.wheatStage(1);
+    this.wheatStage(2);
+    this.wheatStage(3);
+    this.wheatStage(4);
+    this.cornStage(1);
+    this.cornStage(2);
+    this.cornStage(3);
+    this.cornStage(4);
+    this.tomatoStage(1);
+    this.tomatoStage(2);
+    this.tomatoStage(3);
+    this.tomatoStage(4);
+    this.farmhouse('farmhouse_01');
+  }
+
+  /** Tilled-soil diamond overlay: dark soil + furrow rows. Watered = darker + sheen. */
+  private soilTile(key: string, seed: number, base: number, watered: boolean): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(base, 1);
+    this.diamondPath({ cx: 64, cy: 32, w: 120, h: 58 });
+    g.fillPath();
+    // Furrows: diagonal ridges across the diamond.
+    g.lineStyle(3, watered ? 0x2e1f12 : 0x54371f, 0.9);
+    for (let i = 0; i < 5; i++) {
+      const y = 14 + i * 9;
+      g.beginPath();
+      g.moveTo(28, y);
+      g.lineTo(100, y - 12);
+      g.strokePath();
+    }
+    g.lineStyle(1.5, watered ? 0x6b4c30 : 0x8a5f3a, 0.9);
+    for (let i = 0; i < 5; i++) {
+      const y = 16 + i * 9;
+      g.beginPath();
+      g.moveTo(28, y);
+      g.lineTo(100, y - 12);
+      g.strokePath();
+    }
+    if (watered) {
+      g.fillStyle(0x4f9fe8, 0.22);
+      this.diamondPath({ cx: 64, cy: 32, w: 120, h: 58 });
+      g.fillPath();
+      g.lineStyle(2, 0x9fd4ff, 0.7);
+      g.beginPath();
+      g.moveTo(40, 34);
+      g.lineTo(56, 28);
+      g.moveTo(66, 38);
+      g.lineTo(82, 32);
+      g.strokePath();
+    }
+    // Clod speckles (deterministic).
+    const rand = makeSpeckle(seed);
+    for (let i = 0; i < 12; i++) {
+      const x = 20 + rand() * 88;
+      const y = 10 + rand() * 44;
+      if (Math.abs(x - 64) / 54 + Math.abs(y - 32) / 25 > 1) {
+        continue;
+      }
+      g.fillStyle(watered ? 0x3a2716 : 0x9a6f45, 0.8);
+      g.fillEllipse(x, y, 4 + rand() * 4, 2 + rand() * 2);
+    }
+    g.lineStyle(2, watered ? 0x2c5a8a : 0x3f2812, 0.7);
+    this.diamondPath({ cx: 64, cy: 32, w: 120, h: 58 });
+    g.strokePath();
+    g.generateTexture(key, 128, 64);
+  }
+
+  /**
+   * Validity highlight: colored diamond + glyph (check vs cross) so meaning
+   * never relies on color alone.
+   */
+  private validityTile(key: string, color: number, valid: boolean): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(color, 0.2);
+    this.diamondPath({ cx: 64, cy: 32, w: 126, h: 62 });
+    g.fillPath();
+    g.lineStyle(3, color, 0.95);
+    this.diamondPath({ cx: 64, cy: 32, w: 124, h: 60 });
+    g.strokePath();
+    g.lineStyle(5, 0xffffff, 0.95);
+    g.beginPath();
+    if (valid) {
+      g.moveTo(52, 33);
+      g.lineTo(61, 42);
+      g.lineTo(78, 22);
+    } else {
+      g.moveTo(54, 22);
+      g.lineTo(74, 42);
+      g.moveTo(74, 22);
+      g.lineTo(54, 42);
+    }
+    g.strokePath();
+    g.generateTexture(key, 128, 64);
+  }
+
+  // -- wheat (48x64): sprouts -> tuft -> pale heads -> golden ------------------------
+
+  private wheatStage(stage: number): void {
+    const g = this.g;
+    g.clear();
+    const key = `crop_wheat_stage_${String(stage).padStart(2, '0')}`;
+    if (stage === 1) {
+      g.lineStyle(3, 0x55a95c, 1);
+      for (const [x, lean] of [[18, -4], [26, 1], [33, 5]] as const) {
+        g.beginPath();
+        g.moveTo(x, 64);
+        g.lineTo(x + lean, 44);
+        g.strokePath();
+      }
+    } else if (stage === 2) {
+      g.fillStyle(0x3f8a45, 1);
+      g.fillEllipse(24, 52, 34, 26);
+      g.fillStyle(0x55a95c, 1);
+      g.fillEllipse(24, 46, 28, 22);
+      g.lineStyle(2, 0x2c6b33, 1);
+      for (let i = 0; i < 5; i++) {
+        g.beginPath();
+        g.moveTo(12 + i * 6, 52);
+        g.lineTo(12 + i * 6, 34);
+        g.strokePath();
+      }
+    } else {
+      const ripe = stage === 4;
+      const stalk = ripe ? 0xd8a83f : 0x6aa84f;
+      const head = ripe ? 0xf2c230 : 0xb9d97a;
+      for (let i = 0; i < 5; i++) {
+        const x = 10 + i * 7;
+        const top = 26 - (i % 2) * 4;
+        g.lineStyle(2.5, stalk, 1);
+        g.beginPath();
+        g.moveTo(x, 64);
+        g.lineTo(x, top);
+        g.strokePath();
+        g.fillStyle(head, 1);
+        g.fillEllipse(x, top - 4, 7, 13);
+        g.lineStyle(1, ripe ? 0xa87c1f : 0x7a9a4a, 1);
+        g.beginPath();
+        g.moveTo(x - 4, top - 8);
+        g.lineTo(x - 7, top - 13);
+        g.moveTo(x + 4, top - 8);
+        g.lineTo(x + 7, top - 13);
+        g.strokePath();
+      }
+    }
+    g.generateTexture(key, 48, 64);
+  }
+
+  // -- corn (56x96): sprout -> leafy -> ears -> tasseled ------------------------------
+
+  private cornStage(stage: number): void {
+    const g = this.g;
+    g.clear();
+    const key = `crop_corn_stage_${String(stage).padStart(2, '0')}`;
+    if (stage === 1) {
+      g.lineStyle(4, 0x55a95c, 1);
+      g.beginPath();
+      g.moveTo(28, 96);
+      g.lineTo(28, 70);
+      g.strokePath();
+      g.fillStyle(0x66c06c, 1);
+      g.fillEllipse(21, 72, 16, 8);
+      g.fillEllipse(35, 72, 16, 8);
+    } else if (stage === 2) {
+      g.lineStyle(6, 0x3f8a45, 1);
+      g.beginPath();
+      g.moveTo(28, 96);
+      g.lineTo(28, 44);
+      g.strokePath();
+      g.fillStyle(0x4c9a52, 1);
+      g.fillEllipse(16, 66, 24, 12);
+      g.fillEllipse(40, 66, 24, 12);
+      g.fillEllipse(20, 52, 22, 11);
+      g.fillEllipse(36, 52, 22, 11);
+    } else {
+      const ripe = stage === 4;
+      g.lineStyle(7, ripe ? 0x4c8a45 : 0x3f8a45, 1);
+      g.beginPath();
+      g.moveTo(28, 96);
+      g.lineTo(28, 16);
+      g.strokePath();
+      g.fillStyle(0x4c9a52, 1);
+      g.fillEllipse(14, 74, 26, 13);
+      g.fillEllipse(42, 74, 26, 13);
+      g.fillEllipse(16, 56, 24, 12);
+      g.fillEllipse(40, 56, 24, 12);
+      // Ears.
+      g.fillStyle(ripe ? 0xf2c230 : 0x7ab648, 1);
+      g.fillRoundedRect(31, 54, 10, 22, 4);
+      g.fillRoundedRect(15, 64, 10, 20, 4);
+      g.fillStyle(0x8fd47a, 1);
+      g.fillTriangle(31, 54, 41, 54, 36, 44);
+      g.fillTriangle(15, 64, 25, 64, 20, 55);
+      if (ripe) {
+        g.fillStyle(0xd8b25a, 1);
+        g.fillEllipse(28, 12, 20, 12);
+      } else {
+        g.fillStyle(0x66c06c, 1);
+        g.fillEllipse(28, 14, 16, 10);
+      }
+    }
+    g.generateTexture(key, 56, 96);
+  }
+
+  // -- tomato (56x64): sprout -> bush -> flowers -> red fruit -------------------------
+
+  private tomatoStage(stage: number): void {
+    const g = this.g;
+    g.clear();
+    const key = `crop_tomato_stage_${String(stage).padStart(2, '0')}`;
+    if (stage === 1) {
+      g.lineStyle(3, 0x55a95c, 1);
+      g.beginPath();
+      g.moveTo(28, 64);
+      g.lineTo(28, 42);
+      g.strokePath();
+      g.fillStyle(0x66c06c, 1);
+      g.fillEllipse(22, 44, 14, 8);
+      g.fillEllipse(34, 44, 14, 8);
+    } else {
+      g.fillStyle(0x2c6b33, 1);
+      g.fillEllipse(28, 48, 50, 34);
+      g.fillStyle(0x3f8a45, 1);
+      g.fillEllipse(28, 42, 42, 28);
+      g.fillStyle(0x55a95c, 1);
+      g.fillEllipse(22, 36, 24, 16);
+      if (stage === 3) {
+        g.fillStyle(0xf2e230, 1);
+        for (const [x, y] of [[18, 40], [30, 34], [38, 44]] as const) {
+          g.fillCircle(x, y, 3);
+        }
+      } else if (stage === 4) {
+        g.fillStyle(0xd63b2f, 1);
+        for (const [x, y] of [[16, 44], [26, 38], [36, 46], [30, 52]] as const) {
+          g.fillCircle(x, y, 5);
+        }
+        g.fillStyle(0xff8a7a, 1);
+        g.fillCircle(24, 36, 1.8);
+        g.fillCircle(34, 44, 1.8);
+      }
+    }
+    g.generateTexture(key, 56, 64);
+  }
+
+  // -- farmhouse placeholder (216x208, bottom-center anchor) --------------------------
+
+  private farmhouse(key: string): void {
+    const g = this.g;
+    g.clear();
+    // Stone foundation.
+    g.fillStyle(0x8f8f88, 1);
+    g.fillRect(28, 178, 160, 30);
+    g.fillStyle(0x6f6f68, 1);
+    for (let i = 0; i < 6; i++) {
+      g.fillRect(32 + i * 26, 186, 14, 4);
+    }
+    // Timber walls.
+    g.fillStyle(0xb98a56, 1);
+    g.fillRect(36, 108, 144, 74);
+    g.fillStyle(0x9a6f42, 1);
+    for (let x = 52; x < 180; x += 16) {
+      g.fillRect(x, 108, 4, 74);
+    }
+    // Big pitched roof.
+    g.fillStyle(0x8a4a34, 1);
+    g.fillTriangle(14, 112, 202, 112, 108, 30);
+    g.fillStyle(0xa85f42, 1);
+    g.fillTriangle(108, 30, 202, 112, 108, 112);
+    g.fillStyle(0x6e3826, 1);
+    g.fillTriangle(14, 112, 40, 112, 108, 40);
+    // Roof ridge + eaves shadow.
+    g.lineStyle(5, 0x5c2f20, 1);
+    g.beginPath();
+    g.moveTo(108, 30);
+    g.lineTo(108, 34);
+    g.strokePath();
+    g.fillStyle(0x5c2f20, 1);
+    g.fillRect(14, 108, 188, 8);
+    // Chimney with (static) smoke hint.
+    g.fillStyle(0x7a7a74, 1);
+    g.fillRect(142, 44, 20, 52);
+    g.fillStyle(0x5c5c58, 1);
+    g.fillRect(142, 44, 20, 8);
+    g.fillStyle(0xd8d8d2, 0.5);
+    g.fillCircle(152, 30, 7);
+    g.fillCircle(156, 20, 9);
+    // Door.
+    g.fillStyle(0x5c3a22, 1);
+    g.fillRoundedRect(94, 138, 28, 44, 4);
+    g.fillStyle(0xf2c230, 1);
+    g.fillCircle(116, 162, 2.5);
+    // Windows with warm light.
+    for (const wx of [52, 142] as const) {
+      g.fillStyle(0x5c3a22, 1);
+      g.fillRect(wx - 3, 133, 30, 30);
+      g.fillStyle(0xffd76a, 1);
+      g.fillRect(wx, 136, 24, 24);
+      g.lineStyle(2, 0x5c3a22, 1);
+      g.beginPath();
+      g.moveTo(wx + 12, 136);
+      g.lineTo(wx + 12, 160);
+      g.moveTo(wx, 148);
+      g.lineTo(wx + 24, 148);
+      g.strokePath();
+    }
+    // Hay bale by the wall.
+    g.fillStyle(0xd8b25a, 1);
+    g.fillCircle(190, 190, 13);
+    g.lineStyle(2, 0xa87c1f, 1);
+    g.beginPath();
+    g.moveTo(178, 190);
+    g.lineTo(202, 190);
+    g.strokePath();
+    g.generateTexture(key, 216, 208);
   }
 
   private verifyAll(): void {

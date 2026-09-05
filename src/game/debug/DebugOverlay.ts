@@ -66,7 +66,7 @@ export class DebugOverlay {
         ? TERRAIN_TYPE_NAMES[world.getTile(selected.x, selected.y).terrain]
         : '—';
 
-    return [
+    const lines = [
       `FPS ${fps}  |  F3 debug  G grid  C chunks  K collision`,
       `player  world (${player.x.toFixed(2)}, ${player.y.toFixed(2)})  tile (${player.tileX}, ${player.tileY})  chunk (${playerChunk.x}, ${playerChunk.y})`,
       `camera  scroll (${cam.scrollX.toFixed(0)}, ${cam.scrollY.toFixed(0)})  zoom ${cam.zoom.toFixed(2)}  chunk (${camChunk.x}, ${camChunk.y})`,
@@ -74,5 +74,10 @@ export class DebugOverlay {
       `hover   ${hover ? `(${hover.x}, ${hover.y})` : '—'}   selected ${selected ? `(${selected.x}, ${selected.y}) ${selectedTerrain}` : '—'}`,
       `world   ${worldManager.config.width}x${worldManager.config.height}  seed ${worldManager.config.seed}  origin (${coords.originX}, ${coords.originY})`,
     ];
+    const farmingLines = this.ctx.getFarmingDebugLines?.();
+    if (farmingLines) {
+      lines.push(...farmingLines);
+    }
+    return lines;
   }
 }

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PLAYER_RADIUS, PLAYER_SPEED } from '../../shared/constants/config.js';
+import { ToolType } from '../../shared/types/farming.js';
 import type { CollisionSystem } from '../collision/CollisionSystem.js';
 import type { Coordinates } from '../isometric/Coordinates.js';
 import type { IsoCamera } from '../isometric/IsoCamera.js';
@@ -23,6 +24,8 @@ export class PlayerPlaceholder {
 
   private worldX: number;
   private worldY: number;
+  private tool: ToolType = ToolType.None;
+  private seedId: string | null = null;
   private readonly speed: number;
   private readonly radius: number;
   private readonly collision: CollisionSystem;
@@ -67,6 +70,31 @@ export class PlayerPlaceholder {
   /** Projected ground position (for camera focus / debug). */
   public getScreenPosition(): { x: number; y: number } {
     return this.coordinates.worldToScreen(this.worldX, this.worldY);
+  }
+
+  // -- Phase 2: temporary tool state (final inventory arrives later) ----------
+
+  public getTool(): ToolType {
+    return this.tool;
+  }
+
+  public setTool(tool: ToolType): void {
+    this.tool = tool;
+    if (tool !== ToolType.Seed) {
+      this.seedId = null;
+    }
+  }
+
+  /** Selected seed crop id (meaningful only when tool is Seed). */
+  public getSeedId(): string | null {
+    return this.seedId;
+  }
+
+  public setSeedId(seedId: string | null): void {
+    this.seedId = seedId;
+    if (seedId !== null) {
+      this.tool = ToolType.Seed;
+    }
   }
 
   public createView(): void {

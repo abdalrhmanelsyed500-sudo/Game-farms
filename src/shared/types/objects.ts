@@ -3,12 +3,13 @@
  * by game/rendering/ObjectRenderer.ts.
  */
 
-/** Object kinds implemented in Phase 1. Buildings arrive in later phases. */
+/** Object kinds. Full buildings arrive in later phases; the farmhouse is a static placeholder. */
 export enum WorldObjectType {
   Tree = 'tree',
   Rock = 'rock',
   Flower = 'flower',
   Bush = 'bush',
+  Farmhouse = 'farmhouse',
 }
 
 /** A generic logical world object with a tile footprint. */
