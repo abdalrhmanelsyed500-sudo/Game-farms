@@ -5,6 +5,7 @@ import type { WorldManager } from '../world/WorldManager.js';
 import { ObjectRenderer, type ObjectView } from '../rendering/ObjectRenderer.js';
 import { TileRenderer, type TileNeighborhood } from '../rendering/TileRenderer.js';
 import { TerrainType } from '../../shared/types/tiles.js';
+import type { WorldObjectData } from '../../shared/types/objects.js';
 import type { Coordinates } from './Coordinates.js';
 
 /**
@@ -109,6 +110,42 @@ export class IsoRenderer {
     if (image) {
       this.tileRenderer.refreshTile(image, world.getTile(tileX, tileY));
     }
+  }
+
+  /**
+   * Add ONE object view without rebuilding its chunk (Phase 3: placed
+   * buildings). Returns false when the chunk is not loaded (the object then
+   * renders normally on chunk load) or the view already exists.
+   */
+  public addObjectView(obj: WorldObjectData): boolean {
+    const world = this.worldManager.getWorld();
+    const coord = world.worldToChunk(obj.x, obj.y);
+    const view = this.views.get(this.coordinates.getChunkKey(coord.x, coord.y));
+    if (!view) {
+      return false;
+    }
+    const name = `object_${obj.id}`;
+    if (view.objects.some((o) => o.container.name === name)) {
+      return false;
+    }
+    view.objects.push(this.objectRenderer.createObject(obj));
+    view.objectCount = view.objects.length;
+    return true;
+  }
+
+  /** Remove ONE object view without rebuilding its chunk. False when absent. */
+  public removeObjectView(objectId: string): boolean {
+    const name = `object_${objectId}`;
+    for (const view of this.views.values()) {
+      const index = view.objects.findIndex((o) => o.container.name === name);
+      if (index >= 0) {
+        const [removed] = view.objects.splice(index, 1);
+        removed?.destroy();
+        view.objectCount = view.objects.length;
+        return true;
+      }
+    }
+    return false;
   }
 
   // -- chunk views ---------------------------------------------------------------

@@ -96,6 +96,21 @@ const DEFINITIONS: readonly AssetDefinition[] = [
 
   // Farmhouse placeholder (Phase 2 static; BuildingSystem arrives later).
   obj('farmhouse_01', 216, 208),
+
+  // -- Phase 3: buildings ---------------------------------------------------------
+  obj('building_small_house', 216, 208),
+  obj('building_barn', 288, 240),
+  obj('building_storage_shed', 160, 160),
+
+  // -- Phase 3: item icons (48x48, centered) ---------------------------------------
+  { key: 'icon_wheat_seed', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_corn_seed', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_tomato_seed', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_wheat', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_corn', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_tomato', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_wood', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
+  { key: 'icon_stone', category: 'ui', width: 48, height: 48, originX: 0.5, originY: 0.5, generated: true },
 ];
 
 export const ASSET_MANIFEST: Readonly<Record<string, AssetDefinition>> = Object.freeze(

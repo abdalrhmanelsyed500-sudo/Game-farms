@@ -3,13 +3,15 @@
  * by game/rendering/ObjectRenderer.ts.
  */
 
-/** Object kinds. Full buildings arrive in later phases; the farmhouse is a static placeholder. */
+/** Object kinds. The farmhouse is a static placeholder; Building covers Phase 3 placed buildings. */
 export enum WorldObjectType {
   Tree = 'tree',
   Rock = 'rock',
   Flower = 'flower',
   Bush = 'bush',
   Farmhouse = 'farmhouse',
+  /** Player-placed building (see PlacedBuildingData for the building id). */
+  Building = 'building',
 }
 
 /** A generic logical world object with a tile footprint. */

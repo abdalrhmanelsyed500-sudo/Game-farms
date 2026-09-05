@@ -12,9 +12,10 @@ import {
 } from '../src/shared/types/farming.js';
 import { WorldManager } from '../src/game/world/WorldManager.js';
 import { DEFAULT_WORLD_CONFIG } from '../src/game/world/WorldConfig.js';
-import { FarmingSystem } from '../src/game/farming/FarmingSystem.js';
+import { FarmingSystem, seedItemIdForCrop } from '../src/game/farming/FarmingSystem.js';
 import { LocalFarmState } from '../src/game/farming/LocalFarmState.js';
-import { SeedPouch } from '../src/game/farming/SeedPouch.js';
+import { InventorySystem } from '../src/game/items/InventorySystem.js';
+import { LocalInventoryState } from '../src/game/items/LocalInventoryState.js';
 import { ManualClock } from '../src/game/farming/Clock.js';
 import { CROP_IDS, requireCropDefinition } from '../src/game/farming/CropDefinitions.js';
 
@@ -22,16 +23,24 @@ import { CROP_IDS, requireCropDefinition } from '../src/game/farming/CropDefinit
 const TX = FARM_PLOT_X + 2;
 const TY = FARM_PLOT_Y + 2;
 
+function makeInventory(): InventorySystem {
+  const inventory = new InventorySystem(new LocalInventoryState());
+  inventory.addItem('item:wheat_seed', 20);
+  inventory.addItem('item:corn_seed', 20);
+  inventory.addItem('item:tomato_seed', 20);
+  return inventory;
+}
+
 function makeSystem(clock = new ManualClock(1_000_000)): {
   farming: FarmingSystem;
   clock: ManualClock;
-  seeds: SeedPouch;
+  inventory: InventorySystem;
 } {
   const manager = new WorldManager(DEFAULT_WORLD_CONFIG);
   const world = manager.initialize();
-  const seeds = SeedPouch.withStarterSeeds(['wheat_seed', 'corn_seed', 'tomato_seed']);
-  const farming = new FarmingSystem(world, new LocalFarmState(), seeds, clock);
-  return { farming, clock, seeds };
+  const inventory = makeInventory();
+  const farming = new FarmingSystem(world, new LocalFarmState(), inventory, clock);
+  return { farming, clock, inventory };
 }
 
 describe('FarmingSystem soil', () => {
@@ -70,7 +79,7 @@ describe('FarmingSystem soil', () => {
     const manager = new WorldManager(DEFAULT_WORLD_CONFIG);
     const world = manager.initialize();
     const plotState = new LocalFarmState({ x: 116, y: 118, width: 20, height: 20 });
-    const farming = new FarmingSystem(world, plotState, new SeedPouch(), new ManualClock(0));
+    const farming = new FarmingSystem(world, plotState, makeInventory(), new ManualClock(0));
     expect(farming.canTill(118, 119).reason).toBe(FarmRejectReason.BlockedByObject);
     // Spawn-plaza grass inside the same custom plot tills fine.
     expect(farming.canTill(124, 124)).toEqual({ ok: true });
@@ -80,13 +89,14 @@ describe('FarmingSystem soil', () => {
 describe('FarmingSystem planting', () => {
   it('plants each crop on tilled soil and consumes one seed', () => {
     for (const cropId of CROP_IDS) {
-      const { farming, seeds } = makeSystem();
+      const { farming, inventory } = makeSystem();
       const def = requireCropDefinition(cropId);
-      const before = seeds.getCount(def.seedItemId);
+      const seedItem = seedItemIdForCrop(def);
+      const before = inventory.getQuantity(seedItem);
       expect(farming.till(TX, TY).ok).toBe(true);
       expect(farming.canPlant(TX, TY, cropId)).toEqual({ ok: true });
       expect(farming.plant(TX, TY, cropId).ok).toBe(true);
-      expect(seeds.getCount(def.seedItemId)).toBe(before - 1);
+      expect(inventory.getQuantity(seedItem)).toBe(before - 1);
       const crop = farming.getCropAt(TX, TY);
       expect(crop?.cropId).toBe(cropId);
       expect(crop?.stage).toBe(0);
@@ -111,10 +121,7 @@ describe('FarmingSystem planting', () => {
     const empty = makeSystem();
     expect(empty.farming.till(TX, TY).ok).toBe(true);
     // Drain wheat seeds.
-    const pouch = empty.seeds;
-    while (pouch.getCount('wheat_seed') > 0) {
-      pouch.consume('wheat_seed');
-    }
+    empty.inventory.setQuantity('item:wheat_seed', 0);
     expect(empty.farming.canPlant(TX, TY, 'wheat').reason).toBe(FarmRejectReason.NoSeeds);
   });
 });
@@ -193,10 +200,12 @@ describe('FarmingSystem watering + growth', () => {
     const manager = new WorldManager(DEFAULT_WORLD_CONFIG);
     const world = manager.initialize();
     const clock = new ManualClock(0);
+    const inventory = new InventorySystem(new LocalInventoryState());
+    inventory.addItem('item:wheat_seed', 20);
     const farming = new FarmingSystem(
       world,
       new LocalFarmState(),
-      SeedPouch.withStarterSeeds(['wheat_seed']),
+      inventory,
       clock,
       2, // 2x scale => wheat needs 80s
     );
@@ -322,19 +331,53 @@ describe('LocalFarmState', () => {
   });
 });
 
-describe('SeedPouch', () => {
-  it('consumes only when seeds remain', () => {
-    const pouch = SeedPouch.withStarterSeeds(['wheat_seed']);
-    expect(pouch.getCount('wheat_seed')).toBe(20);
-    expect(pouch.consume('wheat_seed')).toBe(true);
-    expect(pouch.getCount('wheat_seed')).toBe(19);
-    expect(pouch.getCount('unknown')).toBe(0);
-    expect(pouch.consume('unknown')).toBe(false);
+describe('FarmingSystem inventory integration (Phase 3)', () => {
+  it('adds the harvest yield to the inventory', () => {
+    const { farming, clock, inventory } = makeSystem();
+    expect(inventory.getQuantity('item:tomato')).toBe(0);
+    expect(farming.execute(FarmAction.Till, TX, TY).ok).toBe(true);
+    expect(farming.execute(FarmAction.Plant, TX, TY, 'tomato').ok).toBe(true);
+    expect(farming.execute(FarmAction.Water, TX, TY).ok).toBe(true);
+    clock.advance(48_000);
+    farming.update();
+    expect(farming.execute(FarmAction.Harvest, TX, TY).ok).toBe(true);
+    expect(inventory.getQuantity('item:tomato')).toBe(4);
   });
 
-  it('supports restocking', () => {
-    const pouch = new SeedPouch();
-    pouch.add('corn_seed', 5);
-    expect(pouch.getCount('corn_seed')).toBe(5);
+  it('does not consume seeds when planting fails', () => {
+    const { farming, inventory } = makeSystem();
+    const before = inventory.getQuantity('item:wheat_seed');
+    // Untilled soil: plant fails, seed count untouched.
+    expect(farming.execute(FarmAction.Plant, TX, TY, 'wheat').ok).toBe(false);
+    expect(inventory.getQuantity('item:wheat_seed')).toBe(before);
+    expect(farming.getCropAt(TX, TY)).toBeNull();
+  });
+
+  it('leaves the crop planted when the inventory is full', () => {
+    const manager = new WorldManager(DEFAULT_WORLD_CONFIG);
+    const world = manager.initialize();
+    // Two-slot inventory: one seed stack + one full stone stack. After the
+    // seed is consumed the freed slot holds... refill it so wheat has nowhere
+    // to go: fill both slots completely with stone, then grant seeds via a
+    // third... instead: capacity 1, pre-filled with a full stone stack, and
+    // wheat seeds impossible — so plant first with room, then block harvest.
+    const inventory = new InventorySystem(new LocalInventoryState(), 2);
+    inventory.addItem('item:wheat_seed', 1);
+    inventory.addItem('item:stone', 99);
+    const farming = new FarmingSystem(world, new LocalFarmState(), inventory, new ManualClock(0));
+    expect(farming.execute(FarmAction.Till, TX, TY).ok).toBe(true);
+    expect(farming.execute(FarmAction.Plant, TX, TY, 'wheat').ok).toBe(true);
+    // Freed seed slot is immediately clogged: wheat yield (3) cannot fit
+    // anywhere once we top the stone stack and add a blocking stack.
+    inventory.addItem('item:stone', 99); // fills the freed slot
+    expect(farming.execute(FarmAction.Water, TX, TY).ok).toBe(true);
+    // Fast-forward to maturity via the debug helper.
+    expect(farming.forceMatureCrop(TX, TY)).toBe(true);
+    expect(farming.canHarvest(TX, TY).reason).toBe(FarmRejectReason.InventoryFull);
+    expect(farming.execute(FarmAction.Harvest, TX, TY).ok).toBe(false);
+    // Crop untouched, inventory untouched.
+    expect(farming.getCropAt(TX, TY)?.cropId).toBe('wheat');
+    expect(inventory.getQuantity('item:wheat')).toBe(0);
+    expect(inventory.getQuantity('item:stone')).toBe(198);
   });
 });

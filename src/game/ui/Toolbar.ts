@@ -12,37 +12,50 @@ export interface ToolbarSelection {
 
 export interface ToolbarEvents {
   'tool-selected': ToolbarSelection;
+  /** SEEDS slot activated: WorldScene toggles the seed picker popup. */
+  'seeds-requested': void;
+  /** BUILD slot activated: WorldScene toggles build mode. */
+  'build-requested': void;
+  /** INV slot activated: WorldScene toggles the inventory panel. */
+  'inventory-requested': void;
+  /** Esc pressed: WorldScene closes topmost UI, else deselects. */
+  'escape-pressed': void;
+  /** R pressed: WorldScene rotates the ghost (build mode only). */
+  'rotate-requested': void;
+  /** Number key in build mode: pick the nth building in menu order. */
+  'build-pick-index': { index: number };
 }
+
+type SlotKind = 'tool' | 'seeds' | 'build' | 'inventory';
 
 interface SlotDef {
   readonly id: string;
   readonly label: string;
   readonly hint: string;
+  readonly kind: SlotKind;
   readonly tool: ToolType;
-  readonly seedId: string | null;
   readonly tint: number;
 }
 
 const SLOTS: readonly SlotDef[] = [
-  { id: 'hoe', label: 'HOE', hint: '1', tool: ToolType.Hoe, seedId: null, tint: 0x8a5a33 },
-  { id: 'seed:wheat', label: 'WHEAT', hint: '2', tool: ToolType.Seed, seedId: 'wheat', tint: 0xd8a83f },
-  { id: 'seed:corn', label: 'CORN', hint: '3', tool: ToolType.Seed, seedId: 'corn', tint: 0x7ab648 },
-  { id: 'seed:tomato', label: 'TOMATO', hint: '4', tool: ToolType.Seed, seedId: 'tomato', tint: 0xd63b2f },
-  { id: 'water', label: 'WATER', hint: '5', tool: ToolType.WateringCan, seedId: null, tint: 0x3d7fc2 },
-  { id: 'hand', label: 'HAND', hint: '6', tool: ToolType.Hand, seedId: null, tint: 0x9a9a92 },
+  { id: 'hoe', label: 'HOE', hint: '1', kind: 'tool', tool: ToolType.Hoe, tint: 0x8a5a33 },
+  { id: 'seeds', label: 'SEEDS', hint: '2', kind: 'seeds', tool: ToolType.Seed, tint: 0xd8a83f },
+  { id: 'water', label: 'WATER', hint: '3', kind: 'tool', tool: ToolType.WateringCan, tint: 0x3d7fc2 },
+  { id: 'build', label: 'BUILD', hint: '4', kind: 'build', tool: ToolType.None, tint: 0xb06a2a },
+  { id: 'inventory', label: 'INV', hint: 'I', kind: 'inventory', tool: ToolType.None, tint: 0x6a7a9a },
 ];
 
 const SLOT_GAP = 8;
 const BAR_PADDING = 10;
 
 /**
- * Toolbar: minimal Phase 2 tool UI (temporary; the final inventory/tool
- * system replaces it later).
+ * Toolbar: Phase 3 tool/mode UI (HOE / SEEDS / WATER / BUILD / INV).
  *
  * - Pure Phaser UI, screen-fixed (scrollFactor 0), Ui depth band.
- * - Owns its hotkeys (1–6, Esc) — UI-level shortcuts, not world actions.
- * - Emits normalized selections; WorldScene applies them to the player.
- * - Exposes screen bounds so world tap-to-select can ignore taps on the bar
+ * - Owns UI hotkeys (1–4, I, R, H, Esc) — UI-level shortcuts, not actions.
+ * - Emits normalized events; WorldScene applies them (tools, picker, panels).
+ * - Harvest has no slot: click a mature crop with no tool, or press H.
+ * - Exposes screen bounds so world taps on the bar are ignored by the world
  *   (touch and mouse share the same path — no mobile-specific logic).
  */
 export class Toolbar {
@@ -54,10 +67,13 @@ export class Toolbar {
   private readonly slotViews = new Map<string, {
     bg: Phaser.GameObjects.Rectangle;
     frame: Phaser.GameObjects.Rectangle;
-    count: Phaser.GameObjects.Text | null;
+    sub: Phaser.GameObjects.Text | null;
     def: SlotDef;
   }>();
   private selectedId: string | null = null;
+  private buildMode = false;
+  private selectedCropId: string | null = null;
+  private readonly seedCounts = new Map<string, number>();
   private barRect = { x: 0, y: 0, width: 0, height: 0 };
 
   public constructor(scene: Phaser.Scene) {
@@ -104,25 +120,28 @@ export class Toolbar {
     return screenX >= r.x && screenX <= r.x + r.width && screenY >= r.y && screenY <= r.y + r.height;
   }
 
-  /** Reflect external selection state (e.g. initial none). */
+  /** Reflect external selection state (tool + seed crop). */
   public setSelected(tool: ToolType, seedId: string | null): void {
-    const id = SLOTS.find((s) => s.tool === tool && s.seedId === seedId)?.id ?? null;
-    this.selectedId = id;
-    for (const [slotId, view] of this.slotViews) {
-      const active = slotId === id;
-      view.frame.setVisible(active);
-      view.bg.setAlpha(active ? 1 : 0.75);
+    this.selectedCropId = tool === ToolType.Seed ? seedId : null;
+    if (tool === ToolType.Seed) {
+      this.selectedId = 'seeds';
+    } else {
+      this.selectedId = SLOTS.find((s) => s.kind === 'tool' && s.tool === tool)?.id ?? null;
     }
+    this.refreshHighlight();
+    this.refreshSeedsLabel();
   }
 
-  /** Refresh a seed count label (crop id → remaining seeds). */
+  /** Highlight the BUILD slot while build mode is active. */
+  public setBuildMode(active: boolean): void {
+    this.buildMode = active;
+    this.refreshHighlight();
+  }
+
+  /** Refresh a seed count (crop id → remaining seeds). */
   public setSeedCount(cropId: string, count: number): void {
-    for (const view of this.slotViews.values()) {
-      if (view.def.seedId === cropId && view.count) {
-        view.count.setText(`x${count}`);
-        view.bg.setAlpha(count <= 0 ? 0.35 : view.def.id === this.selectedId ? 1 : 0.75);
-      }
-    }
+    this.seedCounts.set(cropId, count);
+    this.refreshSeedsLabel();
   }
 
   public destroy(): void {
@@ -130,7 +149,30 @@ export class Toolbar {
     this.container.destroy(true);
   }
 
-  // -- construction --------------------------------------------------------------------
+  // -- internals --------------------------------------------------------------------
+
+  private refreshHighlight(): void {
+    for (const [slotId, view] of this.slotViews) {
+      const active = slotId === this.selectedId || (this.buildMode && slotId === 'build');
+      view.frame.setVisible(active);
+      view.bg.setAlpha(active ? 1 : 0.75);
+    }
+  }
+
+  /** SEEDS sub-label shows the selected crop's remaining seeds. */
+  private refreshSeedsLabel(): void {
+    const view = this.slotViews.get('seeds');
+    if (!view?.sub) {
+      return;
+    }
+    if (this.selectedCropId === null) {
+      view.sub.setText('pick ▴');
+      return;
+    }
+    const count = this.seedCounts.get(this.selectedCropId) ?? 0;
+    view.sub.setText(`${this.selectedCropId.slice(0, 4)} x${count}`);
+    view.bg.setAlpha(count <= 0 ? 0.35 : this.selectedId === 'seeds' ? 1 : 0.75);
+  }
 
   private buildSlot(def: SlotDef, x: number): void {
     const bg = this.scene.add.rectangle(x, -4, TOOLBAR_SLOT_PX, TOOLBAR_SLOT_PX - 12, 0x1d2b1f, 1);
@@ -148,37 +190,50 @@ export class Toolbar {
 
     const chip = this.scene.add.rectangle(x, -26, 18, 8, def.tint, 1);
     const label = this.scene.add
-      .text(x, -8, def.label, { fontFamily: 'monospace', fontSize: '11px', color: '#e8f0e8' })
+      .text(x, -10, def.label, { fontFamily: 'monospace', fontSize: '11px', color: '#e8f0e8' })
       .setOrigin(0.5);
     const hint = this.scene.add
-      .text(x + TOOLBAR_SLOT_PX / 2 - 6, -22, def.hint, {
+      .text(x + TOOLBAR_SLOT_PX / 2 - 6, -24, def.hint, {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#9adc9a',
       })
       .setOrigin(0.5);
 
-    let count: Phaser.GameObjects.Text | null = null;
-    if (def.seedId !== null) {
-      count = this.scene.add
-        .text(x, 8, 'x–', { fontFamily: 'monospace', fontSize: '10px', color: '#ffe9a3' })
+    let sub: Phaser.GameObjects.Text | null = null;
+    if (def.kind === 'seeds') {
+      sub = this.scene.add
+        .text(x, 8, 'pick ▴', { fontFamily: 'monospace', fontSize: '10px', color: '#ffe9a3' })
         .setOrigin(0.5);
     }
 
     this.container.add([bg, frame, chip, label, hint]);
-    if (count) {
-      this.container.add(count);
+    if (sub) {
+      this.container.add(sub);
     }
-    this.slotViews.set(def.id, { bg, frame, count, def });
+    this.slotViews.set(def.id, { bg, frame, sub, def });
   }
 
   private select(def: SlotDef): void {
-    // Clicking the active slot deselects back to None (handy on touch).
-    if (this.selectedId === def.id) {
-      this.events.emit('tool-selected', { tool: ToolType.None, seedId: null });
-      return;
+    switch (def.kind) {
+      case 'tool':
+        // Clicking the active slot deselects back to None (handy on touch).
+        if (this.selectedId === def.id) {
+          this.events.emit('tool-selected', { tool: ToolType.None, seedId: null });
+        } else {
+          this.events.emit('tool-selected', { tool: def.tool, seedId: null });
+        }
+        return;
+      case 'seeds':
+        this.events.emit('seeds-requested', undefined);
+        return;
+      case 'build':
+        this.events.emit('build-requested', undefined);
+        return;
+      case 'inventory':
+        this.events.emit('inventory-requested', undefined);
+        return;
     }
-    this.events.emit('tool-selected', { tool: def.tool, seedId: def.seedId });
   }
 
   private bindHotkeys(): void {
@@ -191,18 +246,32 @@ export class Toolbar {
       Phaser.Input.Keyboard.KeyCodes.TWO,
       Phaser.Input.Keyboard.KeyCodes.THREE,
       Phaser.Input.Keyboard.KeyCodes.FOUR,
-      Phaser.Input.Keyboard.KeyCodes.FIVE,
-      Phaser.Input.Keyboard.KeyCodes.SIX,
     ];
     codes.forEach((code, index) => {
-      const slot = SLOTS[index];
-      if (!slot) {
-        return;
-      }
-      keyboard.addKey(code).on('down', () => this.select(slot));
+      keyboard.addKey(code).on('down', () => {
+        // In build mode the number keys pick buildings, not tools.
+        if (this.buildMode && index < 3) {
+          this.events.emit('build-pick-index', { index });
+          return;
+        }
+        const slot = SLOTS[index];
+        if (slot) {
+          this.select(slot);
+        }
+      });
+    });
+    keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I).on('down', () => {
+      this.events.emit('inventory-requested', undefined);
+    });
+    keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R).on('down', () => {
+      this.events.emit('rotate-requested', undefined);
+    });
+    // Hidden harvest hotkey: the toolbar has no HAND slot by design.
+    keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H).on('down', () => {
+      this.events.emit('tool-selected', { tool: ToolType.Hand, seedId: null });
     });
     keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).on('down', () => {
-      this.events.emit('tool-selected', { tool: ToolType.None, seedId: null });
+      this.events.emit('escape-pressed', undefined);
     });
   }
 }

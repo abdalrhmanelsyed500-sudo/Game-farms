@@ -351,6 +351,37 @@ export class LocalWorldDataProvider implements WorldDataProvider {
     return obj;
   }
 
+  public addObject(obj: WorldObjectData): void {
+    if (this.objectsById.has(obj.id)) {
+      throw new Error(`[World] duplicate object id "${obj.id}"`);
+    }
+    this.registerObject(obj);
+  }
+
+  public removeObject(objectId: string): boolean {
+    const obj = this.objectsById.get(objectId);
+    if (!obj) {
+      return false;
+    }
+    this.objectsById.delete(objectId);
+    for (const tile of footprintTiles(obj)) {
+      const key = LocalWorldDataProvider.tileKey(tile.x, tile.y);
+      if (this.occupancy.get(key) === objectId) {
+        this.occupancy.delete(key);
+      }
+    }
+    const chunkX = Math.floor(obj.x / this.config.chunkSize);
+    const chunkY = Math.floor(obj.y / this.config.chunkSize);
+    const list = this.objectsByChunk.get(getChunkKey(chunkX, chunkY));
+    if (list) {
+      const index = list.findIndex((o) => o.id === objectId);
+      if (index >= 0) {
+        list.splice(index, 1);
+      }
+    }
+    return true;
+  }
+
   private registerObject(obj: WorldObjectData): void {
     this.objectsById.set(obj.id, obj);
     for (const tile of footprintTiles(obj)) {

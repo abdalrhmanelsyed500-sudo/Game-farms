@@ -22,6 +22,14 @@ export interface WorldDataProvider {
   getObjectById(objectId: string): WorldObjectData | null;
   getObjectsInChunk(chunkX: number, chunkY: number): readonly WorldObjectData[];
 
+  /**
+   * Register a runtime object (Phase 3: placed buildings). Throws on
+   * duplicate ids. Validation (overlap, terrain) is the caller's job.
+   */
+  addObject(obj: WorldObjectData): void;
+  /** Remove a runtime object from every index. Returns false when unknown. */
+  removeObject(objectId: string): boolean;
+
   /** Object id occupying a tile, if any. */
   getObjectIdAt(tileX: number, tileY: number): string | null;
 

@@ -60,6 +60,16 @@ export class World {
     return this.provider.getObjectsInChunk(chunkX, chunkY);
   }
 
+  /** Register a runtime object (Phase 3: placed buildings). */
+  public addObject(obj: WorldObjectData): void {
+    this.provider.addObject(obj);
+  }
+
+  /** Remove a runtime object. Returns false when the id is unknown. */
+  public removeObject(objectId: string): boolean {
+    return this.provider.removeObject(objectId);
+  }
+
   // -- chunks ---------------------------------------------------------------
 
   public getChunk(chunkX: number, chunkY: number): Chunk | null {

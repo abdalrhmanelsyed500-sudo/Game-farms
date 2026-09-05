@@ -1,12 +1,13 @@
-# Game Farms — Phase 2: Farming World
+# Game Farms — Phase 3: Inventory & Buildings
 
 A production-quality foundation for an original browser-based isometric farming / life-sim
-game. Phase 1 delivered the engine + isometric renderer; **Phase 2 adds the first real
-playable farming loop** on top of the untouched Phase 1 core:
+game. Phase 1 delivered the engine + isometric renderer, Phase 2 the farming loop;
+**Phase 3 adds the item/inventory/tool systems and constructible buildings** on top of
+the untouched Phase 1 + 2 core:
 
-> **Select land → till → plant → water → grow → harvest** (wheat, corn, tomato),
-> with a data-driven farm plot, timestamp-based growth, and placeholder art — still
-> **no animals, inventory, economy, quests, NPCs, multiplayer, auth, shops, or database.**
+> **Inventory (24 slots) → seed picker → harvests land in your pack → spend wood/stone
+> to place a house, barn, or shed** with a ghost preview, rotation, and live validity —
+> still **no animals, economy, quests, NPCs, multiplayer, auth, shops, or database.**
 > Those plug in later without rewriting the core.
 
 ---
@@ -43,8 +44,13 @@ The world is rendered **only** by Phaser — no React/DOM rendering of game cont
 | Mouse wheel        | Zoom toward pointer (0.5× – 2×)     |
 | Pinch (touch)      | Zoom                                |
 | Hover              | Highlight tile + validity preview (white/green ✓/red ✗) |
-| Click / tap        | Select tile + run current tool action |
-| `1`–`6` / toolbar  | Hoe · Wheat · Corn · Tomato · Water · Hand (`Esc` = none) |
+| Click / tap        | Select tile + run current tool action (or place building) |
+| `1`–`4` / toolbar  | Hoe · Seeds (picker) · Water · Build mode |
+| `I` / INV slot     | Toggle the inventory panel (24 slots, read-only) |
+| `R` (build mode)   | Rotate ghost 0° → 90° → 180° → 270° |
+| `1`–`3` (build mode) | Pick Small House · Barn · Storage Shed |
+| `H` or bare click  | Harvest mature crops (no HAND slot by design) |
+| `Esc`              | Close panel → picker → build mode → deselect, in that order |
 | `F3`               | Toggle debug overlay                |
 | `G`                | Toggle tile-grid overlay            |
 | `C`                | Toggle chunk-boundary overlay       |
@@ -106,11 +112,16 @@ src/
 │   ├── camera/                 # CameraController (smoothing, bounds, zoom-to-pointer)
 │   ├── debug/                  # Debug/Performance/Coordinate/Grid/Chunk/Collision overlays
 │   ├── farming/                # FarmingSystem, LocalFarmState, Crop/Soil renderers,
-│   │                           # CropDefinitions, Clock, SeedPouch, FarmEffects
-│   ├── ui/                     # Toolbar (temporary tool UI)
+│   │                           # CropDefinitions, Clock, FarmEffects
+│   ├── items/                  # ItemCatalog, InventorySystem, LocalInventoryState
+│   ├── tools/                  # ToolCatalog, EquipmentState
+│   ├── buildings/              # BuildingCatalog, PlacementValidator, BuildingSystem,
+│   │                           # LocalBuildingState, BuildingPreview (ghost)
+│   ├── ui/                     # Toolbar, SeedPickerPopup, BuildMenuPanel, InventoryPanel
 │   └── assets/                 # AssetManifest, AssetLoader, PlaceholderTextureFactory
 ├── shared/
-│   ├── types/                  # coordinates, tiles, objects (pure data contracts)
+│   ├── types/                  # coordinates, tiles, objects, farming, items, tools,
+│   │                           # buildings, ui (pure data contracts)
 │   ├── constants/              # THE config file (tiles, world, chunks, camera, player, debug)
 │   └── utils/                  # Logger, SeededRng, TypedEventEmitter, MathUtils
 tests/
@@ -121,7 +132,10 @@ tests/
 ├── CollisionSystem.test.ts     # free move, water block, wall slide, bounds
 └── smoke/BootSmoke.test.ts     # REAL game boot under jsdom (scenes, textures, chunks, camera…)
 ├── FarmingSystem.test.ts       # soil/plant/water/harvest rules, timestamp growth, TIME_SCALE
-└── FarmingIntegration.test.ts  # event sequences, single-tile refresh, chunk-reload state
+├── FarmingIntegration.test.ts  # event sequences, single-tile refresh, chunk-reload state
+├── InventorySystem.test.ts     # catalog, stacking, capacity, atomicity, persistence
+├── Tools.test.ts               # tool catalog, equipment selection, UI modes
+└── BuildingSystem.test.ts      # catalog, rotation, 7 placement rejections, atomic costs
 ```
 
 ---
@@ -219,14 +233,16 @@ keys/dimensions/anchors and **zero** game code changes.
 
 ## 11. Farming gameplay (Phase 2)
 
-**The loop:** pick a tool from the toolbar (or keys `1`–`6`) → hover shows a validity
-preview (green ✓ / red ✗, never color alone) → click to act:
+**The loop:** pick a tool from the toolbar (`1`–`4`, `I`, `R`, `Esc`) → hover shows a
+validity preview (green ✓ / red ✗, never color alone) → click to act:
 
 1. **Hoe** — till grass/dirt inside the farm plot (soil overlay appears, brown puff).
-2. **Wheat/Corn/Tomato seeds** — plant on tilled soil (consumes 1 seed from the
-   temporary pouch, 20 each to start).
+2. **Seeds** — opens the seed picker (wheat/corn/tomato + live counts); planting
+   consumes 1 seed from the inventory (20 each to start).
 3. **Water** — water the crop (soil darkens, droplets) — crops only grow while watered.
-4. **Hand** — harvest mature crops (gold burst, floating `+N Crop` reward event).
+4. **Harvest** — click a mature crop bare-handed (or press `H`): gold burst, floating
+   `+N Crop`, and the yield lands in the inventory. A full pack leaves the crop
+   planted with an `InventoryFull` hint — harvests are never lost.
 
 **Rules worth knowing:**
 
@@ -261,15 +277,23 @@ preview (green ✓ / red ✗, never color alone) → click to act:
 - **Unit (Node, no Phaser):** math, depth, world, chunks, collision — 42 tests,
   all still passing unmodified (Phase 1 regression gate).
 - **Farming unit:** soil/plant/water/harvest validation, timestamp growth,
-  `TIME_SCALE`, pouch, state deltas — 22 tests (`ManualClock`, no Phaser).
+  `TIME_SCALE`, inventory integration (yield lands in pack, full pack keeps the
+  crop planted, failed plants consume nothing), state deltas — 23 tests
+  (`ManualClock`, no Phaser).
 - **Farming integration:** exact event sequences, single-tile refresh proof,
   chunk-reload state, multi-tile independence — 4 tests.
+- **Inventory unit:** catalog, stacking, capacity/leftovers, `canAdd` simulation,
+  fullest-first removal, events, provider persistence — 16 tests.
+- **Tools unit:** tool catalog, key bindings, equipment selection/events — 10 tests.
+- **Buildings unit:** catalog, rotation footprints, all 7 placement rejections,
+  atomic costs, WorldObject + walkability integration, demolish, state — 18 tests.
 - **Boot smoke (jsdom + stubbed canvas):** boots the real `Phaser.Game` through all
-  three scenes, generates all textures, streams 9 chunks (9216 tiles), drives
-  camera/picking/movement/debug, **and runs the full farming loop end-to-end**
-  (till → plant → water → mature → harvest, asserting single-view updates) —
-  4 tests. No GPU required, runs in CI.
-- **Total: 72 tests.** Determinism: demo-world tests rely on the fixed seed;
+  three scenes, generates all textures (incl. buildings + item icons), streams 9
+  chunks (9216 tiles), drives camera/picking/movement/debug, runs the full farming
+  loop end-to-end, **and runs the Phase 3 loop** (seed picker → inventory panel →
+  build mode → rotate → place, asserting single-view add + atomic deduction) —
+  5 tests. No GPU required, runs in CI.
+- **Total: 118 tests.** Determinism: demo-world tests rely on the fixed seed;
   farming-time tests use `ManualClock`.
 
 ## 14. Performance notes
@@ -287,13 +311,51 @@ preview (green ✓ / red ✗, never color alone) → click to act:
   world (provider interfaces are built for server streaming later); soil never
   dries and crops never wither (growth-gating hooks exist in `FarmingSystem`).
 
-## 15. What Phase 3 builds on this
+## 15. Inventory, tools & buildings (Phase 3)
 
-`BuildingSystem` / `AnimalSystem` / `InventorySystem` / … plug into the same seams
-Phase 2 used: `WorldManager` (data), `IsoRenderer.refreshTile` + per-chunk views
-(visuals), `InputManager` + toolbar selections (actions), `FarmStateProvider`-style
-provider interfaces (local now, server later) — without touching `IsoMath`,
-`ChunkManager`, `CameraController`, `DepthSorter`, `FarmingSystem`, or the renderers.
-Suggested first Phase 3 step: **real InventorySystem** behind `ISeedInventory`-style
-ports (seeds in, harvests out), then a placement preview reusing the validity-highlight
-pattern for the first constructible building.
+**Items & inventory:** `ItemCatalog` is the single source of truth (8 items: 3 seeds,
+3 crops, wood, stone — stable `item:*` ids, stack sizes, icon keys). `InventorySystem`
+is pure slot logic (24 slots via `INVENTORY_CAPACITY`): stack-first adds, fullest-first
+removals, `canAdd`/`canRemove` simulations, leftover/missing reporting instead of
+silent overflow, and `inventory-changed` events. State persists through the
+`InventoryStateProvider` port (`LocalInventoryState` now, server later). Seeded from
+`STARTER_INVENTORY` (100 wood / 60 stone / 20 of each seed — house+shed together, or
+barn as a real choice).
+
+**Farming ↔ inventory:** planting consumes a seed atomically (failed plants consume
+nothing); harvests move yield into the pack and roll back on any leftover — a full
+inventory returns `InventoryFull` and leaves the crop planted. The temporary
+`SeedPouch` is deleted; `CropDefinitions` is untouched (the legacy→namespaced id
+bridge lives in two `FarmingSystem` helpers).
+
+**Tools:** `ToolCatalog` (hoe/seeds/water/hand + key bindings) with `EquipmentState`
+as the selection source of truth (tool + seed crop + building, `equipment-changed`
+events). The toolbar is `HOE / SEEDS / WATER / BUILD / INV` (`1/2/3/4/I`, `Esc`
+cascade, `R` rotate, `H` harvest); SEEDS opens a catalog-driven seed picker with live
+counts.
+
+**Buildings:** `BuildingCatalog` (Small House 3×2, Barn 4×3, Storage Shed 2×2 — costs,
+footprints, sprites, all data). `PlacementValidator` is pure rules with 7 rejection
+reasons (unknown building · bad rotation · outside farm plot · past world edge ·
+occupied · crops in footprint · insufficient resources with per-line have/need).
+`BuildingSystem.place()` re-checks, deducts atomically (never half-charges, refunds on
+registration failure), registers a blocking `WorldObjectType.Building` — collision
+follows from the existing walkability, no second system — and emits
+`building-placed`, which `IsoRenderer.addObjectView()` turns into exactly one view
+(chunks never rebuild). Build mode (`UiMode.Build`) centers the ghost footprint on
+the hovered tile, previews green/red by live validation, and rotates 0/90/180/270
+(`R`); the build menu shows footprint + live affordability, `1`–`3` pick entries.
+
+**How to add an item:** one `ItemCatalog` entry + one `icon_*` manifest key + one
+factory painter — UI, stacking, and saves follow automatically.
+**How to add a building:** one `BuildingCatalog` entry + one `building_*` texture —
+validator, ghost, menu, and placement follow automatically.
+
+## 16. What Phase 4 builds on this
+
+`AnimalSystem` / quests / NPCs / multiplayer / … plug into the same seams: `World` +
+`WorldDataProvider` (data), `IsoRenderer.addObjectView/removeObjectView` (single-view
+visuals), `InputManager` + `UiMode` + `EquipmentState` (actions), `InventorySystem`
+(spend/reward ports), `*-stateProvider` interfaces (local now, server later) — without
+touching `IsoMath`, `ChunkManager`, `CameraController`, `DepthSorter`,
+`CollisionMap`, `FarmingSystem`, `InventorySystem`, `BuildingSystem`, or the renderers.

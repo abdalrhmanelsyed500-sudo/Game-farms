@@ -3,12 +3,27 @@ import {
   CAMERA_DEFAULT_ZOOM,
   CAMERA_WHEEL_STEP,
   CHUNK_STREAM_INTERVAL_MS,
+  INVENTORY_CAPACITY,
   PLAYER_SPAWN_TILE_X,
   PLAYER_SPAWN_TILE_Y,
+  STARTER_INVENTORY,
 } from '../../shared/constants/config.js';
 import type { TileCoord } from '../../shared/types/coordinates.js';
 import { FarmAction, ToolType } from '../../shared/types/farming.js';
+import { BUILDING_ROTATIONS, type BuildingRotation } from '../../shared/types/buildings.js';
+import { UiMode } from '../../shared/types/ui.js';
 import { Logger } from '../../shared/utils/Logger.js';
+import {
+  BuildingSystem,
+  describePlacementRejection,
+} from '../buildings/BuildingSystem.js';
+import {
+  footprintTilesFor,
+  getBuildingDefinitions,
+  requireBuildingDefinition,
+} from '../buildings/BuildingCatalog.js';
+import { LocalBuildingState } from '../buildings/LocalBuildingState.js';
+import { BuildingPreview } from '../buildings/BuildingPreview.js';
 import { CameraController } from '../camera/CameraController.js';
 import { CollisionMap } from '../collision/CollisionMap.js';
 import { CollisionSystem } from '../collision/CollisionSystem.js';
@@ -25,15 +40,20 @@ import { CropRenderer } from '../farming/CropRenderer.js';
 import { CROP_IDS, getCropDefinition } from '../farming/CropDefinitions.js';
 import { SystemClock } from '../farming/Clock.js';
 import { FarmEffects } from '../farming/FarmEffects.js';
-import { FarmingSystem, describeRejectReason } from '../farming/FarmingSystem.js';
+import { FarmingSystem, describeRejectReason, seedItemIdForCrop } from '../farming/FarmingSystem.js';
 import { LocalFarmState } from '../farming/LocalFarmState.js';
-import { SeedPouch, type ISeedInventory } from '../farming/SeedPouch.js';
+import { InventorySystem } from '../items/InventorySystem.js';
+import { LocalInventoryState } from '../items/LocalInventoryState.js';
 import { SoilRenderer } from '../farming/SoilRenderer.js';
 import { InputManager } from '../input/InputManager.js';
 import { IsoCamera } from '../isometric/IsoCamera.js';
 import { IsoRenderer } from '../isometric/IsoRenderer.js';
 import { RenderLayer } from '../rendering/RenderLayers.js';
+import { EquipmentState } from '../tools/EquipmentState.js';
 import { Toolbar } from '../ui/Toolbar.js';
+import { SeedPickerPopup } from '../ui/SeedPickerPopup.js';
+import { BuildMenuPanel } from '../ui/BuildMenuPanel.js';
+import { InventoryPanel } from '../ui/InventoryPanel.js';
 
 /**
  * WorldScene: the playable isometric world.
@@ -59,11 +79,22 @@ export class WorldScene extends Phaser.Scene {
 
   // -- Phase 2: farming layer (new systems on top of Phase 1) ----------------
   private farming!: FarmingSystem;
-  private seeds!: ISeedInventory;
+  private inventory!: InventorySystem;
   private cropRenderer!: CropRenderer;
   private soilRenderer!: SoilRenderer;
   private farmEffects!: FarmEffects;
   private toolbar!: Toolbar;
+
+  // -- Phase 3: inventory UI, tools, buildings ----------------------------------
+  private equipment!: EquipmentState;
+  private buildings!: BuildingSystem;
+  private preview!: BuildingPreview;
+  private seedPicker!: SeedPickerPopup;
+  private buildMenu!: BuildMenuPanel;
+  private inventoryPanel!: InventoryPanel;
+  private uiMode: UiMode = UiMode.Play;
+  private buildRotation: BuildingRotation = 0;
+  private selectedBuildingId: string | null = null;
 
   private hoverHighlight!: Phaser.GameObjects.Image;
   private selectedHighlight!: Phaser.GameObjects.Image;
@@ -112,9 +143,12 @@ export class WorldScene extends Phaser.Scene {
     this.player.createView();
 
     // -- farming (Phase 2 layer; Phase 1 systems untouched) --------------------------
-    const seedItemIds = CROP_IDS.map((id) => getCropDefinition(id)?.seedItemId ?? `${id}_seed`);
-    this.seeds = SeedPouch.withStarterSeeds(seedItemIds);
-    this.farming = new FarmingSystem(world, new LocalFarmState(), this.seeds, new SystemClock());
+    // Phase 3: real inventory seeded from configuration (no UI involvement).
+    this.inventory = new InventorySystem(new LocalInventoryState());
+    for (const [itemId, quantity] of Object.entries(STARTER_INVENTORY)) {
+      this.inventory.addItem(itemId, quantity);
+    }
+    this.farming = new FarmingSystem(world, new LocalFarmState(), this.inventory, new SystemClock());
     this.cropRenderer = new CropRenderer(
       world.chunks,
       this.isoRenderer.objectRendererInstance,
@@ -132,6 +166,26 @@ export class WorldScene extends Phaser.Scene {
     // Single-tile refresh proof (§4): soil changes re-resolve ONLY that tile.
     this.farming.events.on('soil-changed', ({ x, y }) => this.isoRenderer.refreshTile(x, y));
 
+    // -- buildings (Phase 3 layer; farming + world untouched) ----------------------
+    this.buildings = new BuildingSystem(
+      world,
+      this.inventory,
+      new LocalBuildingState(),
+      (x, y) => this.farming.getCropAt(x, y) !== null,
+      (x, y) => x === this.player.tileX && y === this.player.tileY,
+    );
+    this.equipment = new EquipmentState();
+    this.preview = new BuildingPreview(this, worldManager.coordinates);
+    // Placed buildings add/remove ONE object view — chunks never rebuild.
+    this.buildings.events.on('building-placed', ({ object }) => {
+      this.isoRenderer.addObjectView(object);
+      this.refreshBuildMenu();
+    });
+    this.buildings.events.on('building-removed', ({ record }) => {
+      this.isoRenderer.removeObjectView(record.objectId);
+      this.refreshBuildMenu();
+    });
+
     // -- input ---------------------------------------------------------------------
     this.inputManager = new InputManager();
     this.inputManager.bind(this, CAMERA_WHEEL_STEP);
@@ -147,20 +201,66 @@ export class WorldScene extends Phaser.Scene {
       .setDepth(RenderLayer.SelectionHighlight + 1)
       .setVisible(false);
 
-    // -- toolbar (Phase 2 temporary tool UI) -------------------------------------------
+    // -- toolbar + panels (Phase 3 tool/mode UI) ----------------------------------------
     this.toolbar = new Toolbar(this);
     this.toolbar.layout(this.scale.width, this.scale.height);
     this.toolbar.setSelected(ToolType.None, null);
-    this.refreshSeedCounts();
+
+    this.seedPicker = new SeedPickerPopup(this);
+    this.seedPicker.layout(this.scale.width, this.scale.height);
+    this.buildMenu = new BuildMenuPanel(this);
+    this.buildMenu.layout(this.scale.width, this.scale.height);
+    this.inventoryPanel = new InventoryPanel(this, INVENTORY_CAPACITY);
+    this.inventoryPanel.layout(this.scale.width, this.scale.height);
+
     this.toolbar.events.on('tool-selected', ({ tool, seedId }) => {
-      if (tool === ToolType.Seed) {
-        this.player.setSeedId(seedId);
-      } else {
-        this.player.setTool(tool);
-      }
-      this.toolbar.setSelected(this.player.getTool(), this.player.getSeedId());
+      this.exitBuildMode();
+      this.equipment.selectTool(tool, seedId);
+      this.applyEquipment();
       Logger.debug('WorldScene', `tool selected: ${tool}${seedId ? ` (${seedId})` : ''}`);
     });
+    this.toolbar.events.on('seeds-requested', () => {
+      this.exitBuildMode();
+      this.seedPicker.toggle();
+    });
+    this.toolbar.events.on('build-requested', () => {
+      if (this.uiMode === UiMode.Build) {
+        this.exitBuildMode();
+      } else {
+        this.enterBuildMode();
+      }
+    });
+    this.toolbar.events.on('inventory-requested', () => this.toggleInventoryPanel());
+    this.toolbar.events.on('escape-pressed', () => this.handleEscape());
+    this.toolbar.events.on('rotate-requested', () => this.rotateGhost());
+    this.toolbar.events.on('build-pick-index', ({ index }) => {
+      const def = getBuildingDefinitions()[index];
+      if (def) {
+        this.selectBuilding(def.id);
+      }
+    });
+
+    this.seedPicker.events.on('seed-picked', ({ cropId }) => {
+      this.equipment.selectTool(ToolType.Seed, cropId);
+      this.applyEquipment();
+      this.seedPicker.hide();
+      Logger.debug('WorldScene', `seed picked: ${cropId}`);
+    });
+    this.buildMenu.events.on('building-picked', ({ buildingId }) => {
+      this.selectBuilding(buildingId);
+    });
+
+    // Every inventory mutation refreshes all count/cost displays at once.
+    this.inventory.events.on('inventory-changed', () => {
+      this.refreshSeedCounts();
+      if (this.inventoryPanel.visible) {
+        this.inventoryPanel.refresh(this.inventory);
+      }
+      if (this.uiMode === UiMode.Build) {
+        this.refreshBuildMenu();
+      }
+    });
+    this.refreshSeedCounts();
 
     // -- debug tools ---------------------------------------------------------------
     const debugCtx: DebugContext = {
@@ -224,14 +324,19 @@ export class WorldScene extends Phaser.Scene {
     events.on('move-camera', ({ dx, dy }) => this.cameraController.panByScreenDelta(dx, dy));
     events.on('zoom-camera', ({ x, y, factor }) => this.cameraController.zoomAt(x, y, factor));
     events.on('tile-select', (pos) => {
-      // Taps on the toolbar belong to the UI, never to the world.
-      if (this.toolbar.containsScreenPoint(pos.x, pos.y)) {
+      // Taps on UI belong to the UI, never to the world.
+      if (this.isUiPoint(pos.x, pos.y)) {
         return;
       }
       const tile = this.pickTile(pos.x, pos.y);
       state.setSelectedTile(tile);
       this.updateSelectedHighlight();
-      if (tile) {
+      if (!tile) {
+        return;
+      }
+      if (this.uiMode === UiMode.Build) {
+        this.attemptPlace(tile);
+      } else {
         this.executeFarmAction(tile);
       }
     });
@@ -271,13 +376,20 @@ export class WorldScene extends Phaser.Scene {
     this.context.state.setHoverTile(tile);
     if (!tile) {
       this.hoverHighlight.setVisible(false);
+      this.preview.hide();
       this.coordinateOverlay.clear();
       return;
     }
-    const center = this.context.worlds.coordinates.tileCenterToScreen(tile.x, tile.y);
-    this.hoverHighlight.setPosition(center.x, center.y).setVisible(true);
-    // Phase 2: the hover diamond previews action validity (white/green/red).
-    this.hoverHighlight.setTexture(this.hoverTextureFor(tile));
+    if (this.uiMode === UiMode.Build) {
+      // Build mode: the ghost replaces the single-tile hover diamond.
+      this.hoverHighlight.setVisible(false);
+      this.updateBuildGhost(tile);
+    } else {
+      const center = this.context.worlds.coordinates.tileCenterToScreen(tile.x, tile.y);
+      this.hoverHighlight.setPosition(center.x, center.y).setVisible(true);
+      // Phase 2: the hover diamond previews action validity (white/green/red).
+      this.hoverHighlight.setTexture(this.hoverTextureFor(tile));
+    }
 
     const iso = this.cameraController.camera.screenToWorld(pointer.x, pointer.y);
     const point = this.context.worlds.coordinates.screenToWorld(iso.x, iso.y);
@@ -327,7 +439,13 @@ export class WorldScene extends Phaser.Scene {
         break;
       case ToolType.None:
       default:
-        return; // inspect-only: selection highlight is the feedback
+        // Phase 3: no HAND slot — clicking a mature crop bare-handed
+        // harvests it; anything else is inspect-only.
+        if (tool === ToolType.None && this.farming.canHarvest(tile.x, tile.y).ok) {
+          action = FarmAction.Harvest;
+          break;
+        }
+        return;
     }
     if (action === null) {
       return;
@@ -398,39 +516,205 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private refreshSeedCounts(): void {
+    const counts = new Map<string, number>();
     for (const cropId of CROP_IDS) {
       const def = getCropDefinition(cropId);
       if (def) {
-        this.toolbar.setSeedCount(cropId, this.seeds.getCount(def.seedItemId));
+        const count = this.inventory.getQuantity(seedItemIdForCrop(def));
+        this.toolbar.setSeedCount(cropId, count);
+        counts.set(cropId, count);
       }
     }
+    this.seedPicker.setCounts(counts);
   }
 
   private buildFarmingDebugLines(): readonly string[] {
     const tool = this.player.getTool();
     const seedId = this.player.getSeedId();
     const toolText = tool === ToolType.Seed && seedId ? `seed:${seedId}` : tool;
+    const modeText =
+      this.uiMode === UiMode.Build
+        ? `build:${this.selectedBuildingId ?? '—'}@${this.buildRotation}`
+        : this.uiMode;
     const counts = CROP_IDS.map((id) => {
       const def = getCropDefinition(id);
-      return `${id.slice(0, 1).toUpperCase()}:${def ? this.seeds.getCount(def.seedItemId) : '?'}`;
+      return `${id.slice(0, 1).toUpperCase()}:${def ? this.inventory.getQuantity(seedItemIdForCrop(def)) : '?'}`;
     }).join(' ');
     const tile = this.context.state.getSelectedTile() ?? this.context.state.getHoverTile();
     if (!tile) {
-      return [`farm    tool=${toolText} | seeds ${counts}`, `farm    tile=—`];
+      return [`farm    tool=${toolText} mode=${modeText} | seeds ${counts}`, `farm    tile=—`];
     }
     const soil = this.farming.getSoilAt(tile.x, tile.y);
     const crop = this.farming.getCropAt(tile.x, tile.y);
     if (!crop) {
-      return [`farm    tool=${toolText} | seeds ${counts}`, `farm    (${tile.x}, ${tile.y}) soil=${soil} crop=—`];
+      return [`farm    tool=${toolText} mode=${modeText} | seeds ${counts}`, `farm    (${tile.x}, ${tile.y}) soil=${soil} crop=—`];
     }
     const def = getCropDefinition(crop.cropId);
     const stages = def ? def.growthStages : '?';
     const ageSec = Math.floor(this.farming.getCropAgeMs(crop) / 1000);
     const stage = this.farming.getCropStage(crop);
     return [
-      `farm    tool=${toolText} | seeds ${counts}`,
+      `farm    tool=${toolText} mode=${modeText} | seeds ${counts}`,
       `farm    (${tile.x}, ${tile.y}) soil=${soil} water=${crop.watered ? 'yes' : 'no'} crop=${crop.cropId} stage=${stage + 1}/${stages} age=${ageSec}s`,
     ];
+  }
+
+  // -- Phase 3: tools, panels, build mode -------------------------------------------------
+
+  /** True when a screen point lands on any visible UI (world must ignore it). */
+  private isUiPoint(screenX: number, screenY: number): boolean {
+    return (
+      this.toolbar.containsScreenPoint(screenX, screenY) ||
+      this.seedPicker.containsScreenPoint(screenX, screenY) ||
+      this.buildMenu.containsScreenPoint(screenX, screenY) ||
+      this.inventoryPanel.containsScreenPoint(screenX, screenY)
+    );
+  }
+
+  /** Bridge EquipmentState into the player placeholder + toolbar highlight. */
+  private applyEquipment(): void {
+    const { tool, seedId } = this.equipment.get();
+    if (tool === ToolType.Seed) {
+      this.player.setSeedId(seedId);
+    } else {
+      this.player.setTool(tool);
+    }
+    this.toolbar.setSelected(this.player.getTool(), this.player.getSeedId());
+  }
+
+  private toggleInventoryPanel(): void {
+    this.inventoryPanel.toggle();
+    if (this.inventoryPanel.visible) {
+      this.inventoryPanel.refresh(this.inventory);
+    }
+  }
+
+  /** Esc cascade: panel → picker → build mode → tool. Exactly one closes. */
+  private handleEscape(): void {
+    if (this.inventoryPanel.visible) {
+      this.inventoryPanel.hide();
+    } else if (this.seedPicker.visible) {
+      this.seedPicker.hide();
+    } else if (this.uiMode === UiMode.Build) {
+      this.exitBuildMode();
+    } else {
+      this.equipment.clear();
+      this.applyEquipment();
+    }
+  }
+
+  private enterBuildMode(): void {
+    this.uiMode = UiMode.Build;
+    this.seedPicker.hide();
+    this.equipment.clear();
+    this.player.setTool(ToolType.None);
+    this.toolbar.setSelected(ToolType.None, null);
+    this.toolbar.setBuildMode(true);
+    this.selectedBuildingId = getBuildingDefinitions()[0]?.id ?? null;
+    this.buildRotation = 0;
+    if (this.selectedBuildingId) {
+      this.equipment.selectBuilding(this.selectedBuildingId);
+      this.preview.show(requireBuildingDefinition(this.selectedBuildingId).spriteKey);
+    }
+    this.buildMenu.show();
+    this.refreshBuildMenu();
+    Logger.debug('WorldScene', 'build mode entered');
+  }
+
+  private exitBuildMode(): void {
+    if (this.uiMode !== UiMode.Build) {
+      return;
+    }
+    this.uiMode = UiMode.Play;
+    this.selectedBuildingId = null;
+    this.buildMenu.hide();
+    this.preview.hide();
+    this.toolbar.setBuildMode(false);
+    Logger.debug('WorldScene', 'build mode exited');
+  }
+
+  private selectBuilding(buildingId: string): void {
+    if (this.uiMode !== UiMode.Build) {
+      this.enterBuildMode();
+    }
+    this.selectedBuildingId = buildingId;
+    this.equipment.selectBuilding(buildingId);
+    this.preview.show(requireBuildingDefinition(buildingId).spriteKey);
+    this.refreshBuildMenu();
+  }
+
+  private rotateGhost(): void {
+    if (this.uiMode !== UiMode.Build) {
+      return;
+    }
+    const index = BUILDING_ROTATIONS.indexOf(this.buildRotation);
+    this.buildRotation = BUILDING_ROTATIONS[(index + 1) % BUILDING_ROTATIONS.length] ?? 0;
+    this.refreshBuildMenu();
+  }
+
+  /** Anchor the footprint so it centers on the hovered tile. */
+  private buildAnchorFor(tile: TileCoord): { x: number; y: number } | null {
+    if (!this.selectedBuildingId) {
+      return null;
+    }
+    const def = requireBuildingDefinition(this.selectedBuildingId);
+    const swapped = this.buildRotation === 90 || this.buildRotation === 270;
+    const width = swapped ? def.height : def.width;
+    const height = swapped ? def.width : def.height;
+    return { x: tile.x - Math.floor(width / 2), y: tile.y - Math.floor(height / 2) };
+  }
+
+  /** Move the ghost to the hovered tile, green/red by live validation. */
+  private updateBuildGhost(tile: TileCoord): void {
+    if (!this.selectedBuildingId) {
+      this.preview.hide();
+      return;
+    }
+    const anchor = this.buildAnchorFor(tile);
+    if (!anchor) {
+      this.preview.hide();
+      return;
+    }
+    const def = requireBuildingDefinition(this.selectedBuildingId);
+    const footprint = footprintTilesFor(anchor.x, anchor.y, def, this.buildRotation);
+    const valid = this.buildings.canPlace(
+      this.selectedBuildingId,
+      anchor.x,
+      anchor.y,
+      this.buildRotation,
+    ).ok;
+    if (!this.preview.visible) {
+      this.preview.show(def.spriteKey);
+    }
+    this.preview.update(footprint, valid);
+  }
+
+  /** Click in build mode: validate + charge + place, with feedback. */
+  private attemptPlace(tile: TileCoord): void {
+    if (!this.selectedBuildingId) {
+      return;
+    }
+    const anchor = this.buildAnchorFor(tile);
+    if (!anchor) {
+      return;
+    }
+    const def = requireBuildingDefinition(this.selectedBuildingId);
+    const result = this.buildings.place(
+      this.selectedBuildingId,
+      anchor.x,
+      anchor.y,
+      this.buildRotation,
+    );
+    if (result.ok) {
+      this.farmEffects.floatingText(anchor.x, anchor.y, `+${def.name}`);
+      this.refreshBuildMenu();
+    } else {
+      this.farmEffects.rejectHint(anchor.x, anchor.y, describePlacementRejection(result));
+    }
+  }
+
+  private refreshBuildMenu(): void {
+    this.buildMenu.refresh(this.inventory, this.selectedBuildingId, this.buildRotation);
   }
 
   // -- streaming ----------------------------------------------------------------------
@@ -452,6 +736,9 @@ export class WorldScene extends Phaser.Scene {
     this.coordinateOverlay.layout(height);
     this.performanceOverlay.layout(width);
     this.toolbar.layout(width, height);
+    this.seedPicker.layout(width, height);
+    this.buildMenu.layout(width, height);
+    this.inventoryPanel.layout(width, height);
     Logger.debug('WorldScene', `resized to ${width}x${height}`);
   }
 
@@ -468,6 +755,10 @@ export class WorldScene extends Phaser.Scene {
     this.cropRenderer.detach();
     this.soilRenderer.detach();
     this.toolbar.destroy();
+    this.seedPicker.destroy();
+    this.buildMenu.destroy();
+    this.inventoryPanel.destroy();
+    this.preview.destroy();
     this.player.destroyView();
     Logger.info('WorldScene', 'shutdown: visuals destroyed, listeners removed');
   }

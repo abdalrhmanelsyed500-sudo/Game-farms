@@ -12,10 +12,10 @@ import { TerrainType } from '../../shared/types/tiles.js';
 import { TypedEventEmitter } from '../../shared/utils/EventEmitter.js';
 import { Logger } from '../../shared/utils/Logger.js';
 import type { World } from '../world/World.js';
+import type { InventorySystem } from '../items/InventorySystem.js';
 import { getCropDefinition, requireCropDefinition } from './CropDefinitions.js';
 import type { Clock } from './Clock.js';
 import type { FarmStateProvider } from './FarmStateProvider.js';
-import type { ISeedInventory } from './SeedPouch.js';
 
 /** Events emitted for every farming state change. Renderers/UI subscribe. */
 export interface FarmingEvents {
@@ -61,20 +61,20 @@ export class FarmingSystem {
 
   private readonly world: World;
   private readonly farmState: FarmStateProvider;
-  private readonly seeds: ISeedInventory;
+  private readonly inventory: InventorySystem;
   private readonly clock: Clock;
   private readonly timeScale: number;
 
   public constructor(
     world: World,
     farmState: FarmStateProvider,
-    seeds: ISeedInventory,
+    inventory: InventorySystem,
     clock: Clock,
     timeScale: number = FARM_TIME_SCALE,
   ) {
     this.world = world;
     this.farmState = farmState;
-    this.seeds = seeds;
+    this.inventory = inventory;
     this.clock = clock;
     this.timeScale = timeScale;
   }
@@ -178,7 +178,7 @@ export class FarmingSystem {
     if (this.farmState.getSoil(tileX, tileY) !== SoilState.Tilled) {
       return rejected(FarmRejectReason.SoilNotTilled);
     }
-    if (this.seeds.getCount(def.seedItemId) <= 0) {
+    if (!this.inventory.hasItem(seedItemIdForCrop(def), 1)) {
       return rejected(FarmRejectReason.NoSeeds);
     }
     return OK;
@@ -190,21 +190,30 @@ export class FarmingSystem {
       return check;
     }
     const def = requireCropDefinition(cropId);
-    if (!this.seeds.consume(def.seedItemId, 1)) {
+    const seedItem = seedItemIdForCrop(def);
+    // Atomic: seed is consumed only if the crop is created. Any failure
+    // below restores the seed — no partial states, no lost items.
+    const consumed = this.inventory.removeItem(seedItem, 1);
+    if (consumed.missing > 0) {
       return rejected(FarmRejectReason.NoSeeds);
     }
-    const crop: CropStateData = {
-      cropId,
-      tileX,
-      tileY,
-      plantedAtMs: this.clock.nowMs(),
-      grownMs: 0,
-      wateredAtMs: null,
-      watered: false,
-      stage: 0,
-    };
-    this.farmState.setCrop(crop);
-    this.events.emit('crop-planted', { crop });
+    try {
+      const crop: CropStateData = {
+        cropId,
+        tileX,
+        tileY,
+        plantedAtMs: this.clock.nowMs(),
+        grownMs: 0,
+        wateredAtMs: null,
+        watered: false,
+        stage: 0,
+      };
+      this.farmState.setCrop(crop);
+      this.events.emit('crop-planted', { crop });
+    } catch (error) {
+      this.inventory.addItem(seedItem, 1);
+      throw error;
+    }
     return OK;
   }
 
@@ -256,6 +265,9 @@ export class FarmingSystem {
     if (this.getCropStage(crop) < def.growthStages - 1) {
       return rejected(FarmRejectReason.NotMature);
     }
+    if (!this.inventory.canAdd(yieldItemIdForCrop(def), def.yieldAmount)) {
+      return rejected(FarmRejectReason.InventoryFull);
+    }
     return OK;
   }
 
@@ -269,6 +281,18 @@ export class FarmingSystem {
       return rejected(FarmRejectReason.NoCrop);
     }
     const def = requireCropDefinition(crop.cropId);
+    // Atomic: the yield must fully fit or nothing happens — the crop is
+    // replanted and any partially added items are rolled back. Harvests are
+    // never silently deleted by a full inventory.
+    const yieldItem = yieldItemIdForCrop(def);
+    const added = this.inventory.addItem(yieldItem, def.yieldAmount);
+    if (added.leftover > 0) {
+      if (added.added > 0) {
+        this.inventory.removeItem(yieldItem, added.added);
+      }
+      this.farmState.setCrop(crop);
+      return rejected(FarmRejectReason.InventoryFull);
+    }
     // Soil stays tilled (dries back) so the tile can be replanted immediately.
     this.farmState.setSoil(tileX, tileY, SoilState.Tilled);
     this.events.emit('soil-changed', { x: tileX, y: tileY, soil: SoilState.Tilled });
@@ -401,6 +425,19 @@ export class FarmingSystem {
   }
 }
 
+/**
+ * CropDefinition legacy ids ("wheat_seed") predate the namespaced item ids
+ * ("item:wheat_seed"). CropDefinitions is a stable module, so the bridge
+ * lives here — in exactly one place, shared by the system and its callers.
+ */
+export function seedItemIdForCrop(def: { seedItemId: string }): string {
+  return `item:${def.seedItemId}`;
+}
+
+export function yieldItemIdForCrop(def: { yieldItemId: string }): string {
+  return `item:${def.yieldItemId}`;
+}
+
 /** Human-readable rejection text for floating UI feedback. */
 export function describeRejectReason(reason: FarmRejectReason): string {
   switch (reason) {
@@ -430,5 +467,7 @@ export function describeRejectReason(reason: FarmRejectReason): string {
       return 'Out of bounds';
     case FarmRejectReason.UnsupportedAction:
       return 'Not available yet';
+    case FarmRejectReason.InventoryFull:
+      return 'Inventory full';
   }
 }

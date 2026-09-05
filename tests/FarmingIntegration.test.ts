@@ -5,7 +5,8 @@ import { WorldManager } from '../src/game/world/WorldManager.js';
 import { DEFAULT_WORLD_CONFIG } from '../src/game/world/WorldConfig.js';
 import { FarmingSystem } from '../src/game/farming/FarmingSystem.js';
 import { LocalFarmState } from '../src/game/farming/LocalFarmState.js';
-import { SeedPouch } from '../src/game/farming/SeedPouch.js';
+import { InventorySystem } from '../src/game/items/InventorySystem.js';
+import { LocalInventoryState } from '../src/game/items/LocalInventoryState.js';
 import { ManualClock } from '../src/game/farming/Clock.js';
 
 const TX = FARM_PLOT_X + 5;
@@ -15,12 +16,11 @@ function makeSystem(): { farming: FarmingSystem; clock: ManualClock } {
   const manager = new WorldManager(DEFAULT_WORLD_CONFIG);
   const world = manager.initialize();
   const clock = new ManualClock(5_000_000);
-  const farming = new FarmingSystem(
-    world,
-    new LocalFarmState(),
-    SeedPouch.withStarterSeeds(['wheat_seed', 'corn_seed', 'tomato_seed']),
-    clock,
-  );
+  const inventory = new InventorySystem(new LocalInventoryState());
+  inventory.addItem('item:wheat_seed', 20);
+  inventory.addItem('item:corn_seed', 20);
+  inventory.addItem('item:tomato_seed', 20);
+  const farming = new FarmingSystem(world, new LocalFarmState(), inventory, clock);
   return { farming, clock };
 }
 

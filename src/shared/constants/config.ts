@@ -130,3 +130,19 @@ export const SEED_STARTING_COUNT = 20;
 export const TOOLBAR_HEIGHT_PX = 76;
 /** Toolbar slot size in screen px. */
 export const TOOLBAR_SLOT_PX = 56;
+
+// ---------------------------------------------------------------------------
+// Inventory (Phase 3)
+// ---------------------------------------------------------------------------
+
+/** Number of inventory slots. Never hard-code capacity elsewhere. */
+export const INVENTORY_CAPACITY = 24;
+
+/** Development starting inventory (seeded through state, not UI). */
+export const STARTER_INVENTORY: Readonly<Record<string, number>> = {
+  'item:wood': 100,
+  'item:stone': 60,
+  'item:wheat_seed': 20,
+  'item:corn_seed': 20,
+  'item:tomato_seed': 20,
+};

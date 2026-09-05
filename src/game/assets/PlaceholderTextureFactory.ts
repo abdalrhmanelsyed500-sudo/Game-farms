@@ -37,6 +37,7 @@ export class PlaceholderTextureFactory {
     factory.generateEntities();
     factory.generateFx();
     factory.generateFarming();
+    factory.generatePhase3();
     factory.verifyAll();
   }
 
@@ -760,6 +761,238 @@ export class PlaceholderTextureFactory {
     g.lineTo(202, 190);
     g.strokePath();
     g.generateTexture(key, 216, 208);
+  }
+
+  // -- Phase 3: buildings + item icons --------------------------------------------
+
+  private generatePhase3(): void {
+    this.smallHouse('building_small_house');
+    this.barn('building_barn');
+    this.storageShed('building_storage_shed');
+    this.seedIcon('icon_wheat_seed', 0xd8a83f);
+    this.seedIcon('icon_corn_seed', 0xe8d44d);
+    this.seedIcon('icon_tomato_seed', 0xd86a5a);
+    this.wheatIcon('icon_wheat');
+    this.cornIcon('icon_corn');
+    this.tomatoIcon('icon_tomato');
+    this.woodIcon('icon_wood');
+    this.stoneIcon('icon_stone');
+  }
+
+  /** Cottage: cream walls, slate-blue pitched roof, warm windows (216x208). */
+  private smallHouse(key: string): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(0x7e7e78, 1);
+    g.fillRect(30, 182, 156, 26);
+    g.fillStyle(0xf0e4cc, 1);
+    g.fillRect(38, 116, 140, 68);
+    g.fillStyle(0xd8c8a4, 1);
+    for (let x = 54; x < 178; x += 16) {
+      g.fillRect(x, 116, 3, 68);
+    }
+    g.fillStyle(0x3d5a8a, 1);
+    g.fillTriangle(16, 120, 200, 120, 108, 36);
+    g.fillStyle(0x4d6fa5, 1);
+    g.fillTriangle(108, 36, 200, 120, 108, 120);
+    g.fillStyle(0x2c4266, 1);
+    g.fillRect(16, 116, 184, 8);
+    g.fillStyle(0x8f8f88, 1);
+    g.fillRect(140, 52, 18, 46);
+    g.fillStyle(0x5c3a22, 1);
+    g.fillRoundedRect(94, 142, 28, 42, 4);
+    g.fillStyle(0xf2c230, 1);
+    g.fillCircle(116, 164, 2.5);
+    for (const wx of [52, 142] as const) {
+      g.fillStyle(0x5c3a22, 1);
+      g.fillRect(wx - 3, 138, 30, 28);
+      g.fillStyle(0xffd76a, 1);
+      g.fillRect(wx, 141, 24, 22);
+      g.lineStyle(2, 0x5c3a22, 1);
+      g.beginPath();
+      g.moveTo(wx + 12, 141);
+      g.lineTo(wx + 12, 163);
+      g.strokePath();
+    }
+    g.generateTexture(key, 216, 208);
+  }
+
+  /** Barn: red walls, gambrel roof, white-trim X doors (288x240). */
+  private barn(key: string): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(0x7e7e78, 1);
+    g.fillRect(34, 210, 220, 30);
+    // Gambrel roof: steep lower slope + shallow peak.
+    g.fillStyle(0x6e3826, 1);
+    g.fillTriangle(24, 150, 264, 150, 144, 60);
+    g.fillStyle(0x8a4a34, 1);
+    g.fillTriangle(60, 150, 228, 150, 144, 60);
+    g.fillStyle(0xd8d8d2, 1);
+    g.fillTriangle(128, 86, 160, 86, 144, 66);
+    // Red plank walls.
+    g.fillStyle(0xa83a2e, 1);
+    g.fillRect(44, 150, 200, 62);
+    g.fillStyle(0x8a2c22, 1);
+    for (let x = 64; x < 244; x += 18) {
+      g.fillRect(x, 150, 4, 62);
+    }
+    // Big double doors with white X bracing.
+    g.fillStyle(0xf0e4cc, 1);
+    g.fillRect(106, 156, 76, 56);
+    g.fillStyle(0x7c241c, 1);
+    g.fillRect(110, 160, 68, 48);
+    g.lineStyle(4, 0xf0e4cc, 1);
+    g.beginPath();
+    g.moveTo(110, 160);
+    g.lineTo(178, 208);
+    g.moveTo(178, 160);
+    g.lineTo(110, 208);
+    g.strokePath();
+    // Hayloft window.
+    g.fillStyle(0xf0e4cc, 1);
+    g.fillRect(128, 108, 32, 28);
+    g.fillStyle(0x2c3a4a, 1);
+    g.fillRect(132, 112, 24, 20);
+    // Side windows.
+    for (const wx of [60, 204] as const) {
+      g.fillStyle(0xf0e4cc, 1);
+      g.fillRect(wx, 168, 26, 26);
+      g.fillStyle(0xffd76a, 1);
+      g.fillRect(wx + 4, 172, 18, 18);
+    }
+    g.generateTexture(key, 288, 240);
+  }
+
+  /** Shed: weathered gray boards, single-slope roof (160x160). */
+  private storageShed(key: string): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(0x6f6f68, 1);
+    g.fillRect(24, 138, 112, 22);
+    g.fillStyle(0x9a938a, 1);
+    g.fillRect(30, 74, 100, 66);
+    g.fillStyle(0x7c766c, 1);
+    for (let x = 42; x < 130; x += 12) {
+      g.fillRect(x, 74, 3, 66);
+    }
+    // Single-slope roof, high on the left.
+    g.fillStyle(0x5c564e, 1);
+    g.fillTriangle(18, 78, 142, 78, 18, 44);
+    g.fillStyle(0x6e6860, 1);
+    g.fillTriangle(24, 74, 136, 74, 24, 50);
+    g.fillStyle(0x3a2c1e, 1);
+    g.fillRect(62, 96, 30, 44);
+    g.fillStyle(0xc4a26d, 1);
+    g.fillCircle(86, 118, 2);
+    g.fillStyle(0x2c3a4a, 1);
+    g.fillRect(98, 96, 22, 22);
+    g.lineStyle(2, 0x3a2c1e, 1);
+    g.strokeRect(98, 96, 22, 22);
+    g.generateTexture(key, 160, 160);
+  }
+
+  /** Shared 48x48 icon plate: dark rounded square + subtle rim. */
+  private iconPlate(): void {
+    const g = this.g;
+    g.clear();
+    g.fillStyle(0x1e2430, 1);
+    g.fillRoundedRect(2, 2, 44, 44, 8);
+    g.lineStyle(2, 0x4a5468, 1);
+    g.strokeRoundedRect(2, 2, 44, 44, 8);
+  }
+
+  /** Seed pouch icon: three seed ellipses in the crop color. */
+  private seedIcon(key: string, color: number): void {
+    const g = this.g;
+    this.iconPlate();
+    g.fillStyle(0x8a5f3a, 1);
+    g.fillRoundedRect(10, 26, 28, 12, 3);
+    g.fillStyle(color, 1);
+    g.fillEllipse(18, 22, 8, 12);
+    g.fillEllipse(26, 19, 8, 12);
+    g.fillEllipse(33, 23, 8, 12);
+    g.generateTexture(key, 48, 48);
+  }
+
+  private wheatIcon(key: string): void {
+    const g = this.g;
+    this.iconPlate();
+    g.lineStyle(3, 0xb98a2e, 1);
+    for (const dx of [-8, 0, 8] as const) {
+      g.beginPath();
+      g.moveTo(24 + dx, 38);
+      g.lineTo(24 + dx, 14);
+      g.strokePath();
+    }
+    g.fillStyle(0xe8c44d, 1);
+    for (const dx of [-8, 0, 8] as const) {
+      for (const dy of [14, 20, 26] as const) {
+        g.fillEllipse(24 + dx - 3, dy, 6, 9);
+        g.fillEllipse(24 + dx + 3, dy, 6, 9);
+      }
+    }
+    g.generateTexture(key, 48, 48);
+  }
+
+  private cornIcon(key: string): void {
+    const g = this.g;
+    this.iconPlate();
+    g.fillStyle(0x3d8a3a, 1);
+    g.fillTriangle(24, 38, 12, 38, 18, 16);
+    g.fillTriangle(24, 38, 36, 38, 30, 16);
+    g.fillStyle(0xe8c44d, 1);
+    g.fillRoundedRect(19, 10, 10, 24, 4);
+    g.fillStyle(0xb98a2e, 1);
+    for (let y = 14; y < 32; y += 5) {
+      g.fillRect(19, y, 10, 1.5);
+    }
+    g.generateTexture(key, 48, 48);
+  }
+
+  private tomatoIcon(key: string): void {
+    const g = this.g;
+    this.iconPlate();
+    g.fillStyle(0xd63b2f, 1);
+    g.fillCircle(24, 26, 11);
+    g.fillStyle(0xb02a20, 1);
+    g.fillCircle(24, 30, 8);
+    g.fillStyle(0x3d8a3a, 1);
+    g.fillTriangle(24, 16, 16, 10, 32, 10);
+    g.fillRect(22, 6, 4, 6);
+    g.generateTexture(key, 48, 48);
+  }
+
+  private woodIcon(key: string): void {
+    const g = this.g;
+    this.iconPlate();
+    g.fillStyle(0x8a5a33, 1);
+    g.fillRoundedRect(10, 16, 28, 8, 4);
+    g.fillRoundedRect(10, 27, 28, 8, 4);
+    g.fillStyle(0xd8b25a, 1);
+    g.fillCircle(11, 20, 3.5);
+    g.fillCircle(11, 31, 3.5);
+    g.lineStyle(1.5, 0x6e4525, 1);
+    g.beginPath();
+    g.moveTo(16, 20);
+    g.lineTo(36, 20);
+    g.moveTo(16, 31);
+    g.lineTo(36, 31);
+    g.strokePath();
+    g.generateTexture(key, 48, 48);
+  }
+
+  private stoneIcon(key: string): void {
+    const g = this.g;
+    this.iconPlate();
+    g.fillStyle(0x9d9d94, 1);
+    g.fillRoundedRect(10, 22, 18, 14, 5);
+    g.fillStyle(0x7e7e78, 1);
+    g.fillRoundedRect(22, 14, 16, 16, 5);
+    g.fillStyle(0xb8b8b0, 1);
+    g.fillCircle(16, 26, 2.5);
+    g.fillCircle(28, 19, 2);
+    g.generateTexture(key, 48, 48);
   }
 
   private verifyAll(): void {

@@ -96,4 +96,6 @@ export enum FarmRejectReason {
   UnknownSeed = 'unknown-seed',
   OutOfBounds = 'out-of-bounds',
   UnsupportedAction = 'unsupported-action',
+  /** Harvest blocked: inventory cannot hold the yield (crop stays planted). */
+  InventoryFull = 'inventory-full',
 }
