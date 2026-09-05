@@ -1,0 +1,50 @@
+/* Phase 1 global styles. The game world itself is rendered by Phaser on a
+   canvas element — CSS only provides the fullscreen page shell. */
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app,
+#game-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #101a12;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Prevent pull-to-refresh / scroll chaining while panning the world. */
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#game-container canvas {
+  display: block;
+}
+
+#boot-fallback {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e8f0e8;
+  background: #101a12;
+  z-index: 10;
+}
+
+#boot-fallback.hidden {
+  display: none;
+}
